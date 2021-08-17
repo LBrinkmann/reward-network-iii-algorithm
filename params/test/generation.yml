@@ -1,0 +1,4 @@
+seed: 10
+n_networks: 6
+weights: [-100, -20, 20, 140]
+n_nodes: 6
