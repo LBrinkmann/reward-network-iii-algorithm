@@ -62,10 +62,8 @@ def calculate_reward_transition_matrices_new(network, n_nodes):
 
 def calculate_reward_transition_matrices(network, n_nodes):
     if 'links' in network:
-        print('links')
         return calculate_reward_transition_matrices_old(network, n_nodes)
     else:
-        print('nolinks')
         return calculate_reward_transition_matrices_new(network, n_nodes)
 
 

@@ -1,6 +1,6 @@
 
 import numpy as np
-from mc.pruning_models.model import calculate_reward_transition_matrices
+from scripts.pruning_models.model import calculate_reward_transition_matrices
 import torch as th
 from scipy.special import softmax
 

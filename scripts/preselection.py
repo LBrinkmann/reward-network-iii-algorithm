@@ -173,11 +173,11 @@ def main(parameter_yaml, networks_json, output_folder):
     #data = {n['network_id']: n for n in data}
     networks_new = [parse_network_v2(
         **params['parse_network_v2'], **n) for n in data]
-    # ipdb.set_trace()
     df = process(networks_new, **params['rest'])
     df = df.reset_index()
     store.store_df(df, output_folder, 'preselection')
-    print('completed')
+    store.store_json(networks_new, output_folder, 'networks')
+    print('complete')
 
 
 if __name__ == "__main__":
