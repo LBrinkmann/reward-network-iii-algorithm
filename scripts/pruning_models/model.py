@@ -186,7 +186,7 @@ def calculate_traces(Q, T, R):
     return RT_tot, AT, NT, RT, RD, QD
 
 
-def make_row(network, RT_tot, AT, NT, RT, RD, QD, n, n_steps, model_name, model_parameter):
+def make_row(network, Q, RT_tot, AT, NT, RT, RD, QD, n, n_steps, model_name, model_parameter):
     """
         Make dataframe rows for each environment for storage.
 
@@ -198,7 +198,7 @@ def make_row(network, RT_tot, AT, NT, RT, RD, QD, n, n_steps, model_name, model_
 
     return {
         'Environment_ID': new_id, 'Solution_ID': solution_id,  'Network_ID': network['network_id'],
-        'Starting_Node': n, 'Depth': n_steps, 'Total_Reward': RT_tot[n], 'Action_Trace': AT[:, n],
+        'Starting_Node': n, 'Depth': n_steps, 'Q': Q, 'Total_Reward': RT_tot[n], 'Action_Trace': AT[:, n],
         'Node_Trace': NT[:, n], 'Reward_Trace': RT[:, n], 'Reward_Diff': RD[:, n],
         'Q_Diff': QD[:, n], 'Model_Name': model_name, **model_parameter_capitalize}
 
@@ -215,6 +215,7 @@ def eval_network(network, n_steps, n_nodes, model='pruning', model_parameter={},
     """
         Evaluate each network.
     """
+    n = network['starting_node']
     T, R = calculate_reward_transition_matrices(network, n_nodes=n_nodes)
 
     if model == 'pruning':
@@ -224,6 +225,8 @@ def eval_network(network, n_steps, n_nodes, model='pruning', model_parameter={},
         Q = calculate_q_matrix_avpruning(R, T, n_steps=n_steps, **model_parameter)
         RT_tot, AT, NT, RT, RD, QD = calculate_traces(Q, T, R)
     elif model == 'no_planing':
+        Q = 'bos'
         RT_tot, AT, NT, RT, RD, QD = calculate_traces_no_planing(T, R, n_steps, **model_parameter)
 
-    return [make_row(network, RT_tot, AT, NT, RT, RD, QD, n, n_steps, model_name, model_parameter) for n in range(n_nodes)]
+    # for n in range(n_nodes)]
+    return [make_row(network, Q, RT_tot, AT, NT, RT, RD, QD, n, n_steps, model_name, model_parameter)]

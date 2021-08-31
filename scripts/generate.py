@@ -7,7 +7,7 @@ Arguments:
     OUTPUT_FOLDER         A folder used for the outputs.
 
 Outputs:
-    ....
+    networks        Generated networks in json.
 """
 
 
@@ -20,7 +20,33 @@ from scripts.utils.utils import load_yaml
 from scripts.utils import store
 import ipdb
 # nodes from 0 to 5
-# actions are 0 and 1
+
+
+def parse_node(name_map, pos_map, id):
+    return {
+        'id': id,
+        'displayName': name_map[id],
+        **pos_map[id]
+    }
+
+
+def parse_link(reward_map, source, target, weight, **_):
+    return {
+        "reward": weight,
+        # "rewardName": reward_map[weight],
+        "sourceId": source,
+        "targetId": target
+    }
+
+
+def parse_network_v2(n_nodes, requiredSolutionLength, missingSolutionPenalty, experiment_name, reward_map, name_map, pos_map, *, nodes, links, graph, network_id, **kwargs):
+    return {
+        'type': 'network',
+        'version': 'four-rewards-v2',
+        'network_id': network_id,
+        'actions': [parse_link(reward_map, **l) for l in links],
+        'nodes': [parse_node(name_map, pos_map, **n) for n in nodes],
+        'starting_node': np.random.choice(np.arange(n_nodes))}
 
 
 def generate_networks(n_networks, weights, n_nodes, seed=None):
@@ -33,7 +59,6 @@ def generate_networks(n_networks, weights, n_nodes, seed=None):
     np.random.seed(seed)
     weights = np.array(weights)
     nodes = np.arange(n_nodes)
-    actions = [0, 1]
     graph_list = []
     while len(graph_list) < n_networks:
         digraph = nx.DiGraph(directed=True)
@@ -44,14 +69,14 @@ def generate_networks(n_networks, weights, n_nodes, seed=None):
                     target = int(np.random.choice(np.delete(nodes, [i])))
                     weight = int(np.random.choice(weights[np.where(weight_count < 3)[0]]))
                     weight_count[np.where(weights == weight)[0][0]] += 1
-                    action = np.random.choice(actions)
-                    digraph.add_edge(i, target, weight=weight, action=action)
+                    #action = np.random.choice(actions)
+                    digraph.add_edge(i, target, weight=weight)
                 else:
                     target = int(np.random.choice(np.delete(nodes, [i, target])))
                     weight = int(np.random.choice(weights[np.where(weight_count < 3)[0]]))
                     weight_count[np.where(weights == weight)[0][0]] += 1
-                    action = [set(actions)-set([action])][0].pop()
-                    digraph.add_edge(i, target, weight=weight, action=action)
+                    #action = [set(actions)-set([action])][0].pop()
+                    digraph.add_edge(i, target, weight=weight)
         if nx.algorithms.components.strongly_connected.is_strongly_connected(digraph) == True:
             digraph_json = nx.json_graph.node_link_data(digraph)
             digraph_json['network_id'] = f'{seed}_{len(graph_list)}'
@@ -61,12 +86,13 @@ def generate_networks(n_networks, weights, n_nodes, seed=None):
 
 def main(parameter_yaml, output_folder):
     params = load_yaml(parameter_yaml)
-    networks = generate_networks(**params)
-    store.store_json(networks, output_folder, 'networks')
+    networks = generate_networks(**params['generation'])
+    networks_parsed = [parse_network_v2(params['generation']['n_nodes'],
+                                        **params['parse_network_v2'], **n) for n in networks]
+    store.store_json(networks_parsed, output_folder, 'networks')
 
 
 if __name__ == "__main__":
     arguments = docopt(__doc__)
-    print(arguments)
     arguments_low = {k.lower(): v for k, v in arguments.items()}
     main(**arguments_low)
