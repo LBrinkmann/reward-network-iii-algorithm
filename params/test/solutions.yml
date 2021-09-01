@@ -1,0 +1,3 @@
+n_nodes: 6
+n_steps: 8
+regret_cap : 105
