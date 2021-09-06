@@ -1,8 +1,0 @@
-n_nodes: 6
-n_steps: 8
-model_settings:
-- model_parameter:
-    gamma_g: 0.0
-    gamma_s: 0.0
-  model: avpruning
-  model_name: Lookahead

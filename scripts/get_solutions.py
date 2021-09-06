@@ -86,11 +86,44 @@ def create_df(networks, params):
     return df
 
 
+def get_df_metrics(df, params):
+    df['Total_Regret'] = df['Lookahead_Reward'] - df['Total_Reward']
+    df['N_Nodes'] = df.apply(add_n_unique, axis=1)
+    df['N_Myopic'] = df.apply(add_n_myopic, axis=1)
+    df['N_Strict_Myopic'] = df.apply(add_n_strict_myopic, axis=1)
+    df['N_Large_Cost'] = df.apply(add_n_large, large_cost=params['large_cost'], axis=1)
+    df['N_Large_Cost_Beginning'] = df.apply(
+        add_n_large_start, n_steps=params['n_steps'], large_cost=params['large_cost'], axis=1)
+    df = df.drop(['Action_Trace', 'Node_Trace', 'Reward_Trace',
+                  'Other_Reward_Trace', 'Lookahead_Reward'], axis=1)
+    return df
+
+
 def expand_actions(df_walk, lst_col):
     '''expand lst_col (actions) column to rows. 1 row -> 8 rows '''
     df_walk_actions = pd.DataFrame({col: np.repeat(df_walk[col].values, df_walk[lst_col].str.len())
                                     for col in df_walk.columns.difference([lst_col])}).assign(**{lst_col: np.concatenate(df_walk[lst_col].values)})[df_walk.columns.tolist()]
     return df_walk_actions
+
+
+def add_n_unique(row):
+    return len(np.unique(row['Node_Trace']))
+
+
+def add_n_myopic(row):
+    return sum(row['Reward_Trace'] >= row['Other_Reward_Trace'])
+
+
+def add_n_strict_myopic(row):
+    return sum(row['Reward_Trace'] > row['Other_Reward_Trace'])
+
+
+def add_n_large(row, large_cost):
+    return sum(row['Reward_Trace'] < large_cost+5)
+
+
+def add_n_large_start(row, n_steps, large_cost):
+    return sum(row['Reward_Trace'][:int(n_steps/2)] < large_cost+5)
 
 
 def add_source(row):
@@ -126,8 +159,11 @@ def main(parameter_yaml, networks_json, output_folder):
     params = load_yaml(parameter_yaml)
     networks = store.load_json(networks_json)
     df = create_df(networks, params)
+    df_metrics = df.copy()
+    df_metrics = get_df_metrics(df_metrics, params)
     df = manipulate_df(df, params)
     store.store_df(df, output_folder, 'solutions')
+    store.store_df(df_metrics, output_folder, 'metrics')
 
 
 if __name__ == "__main__":
