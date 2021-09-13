@@ -14,14 +14,12 @@ Outputs:
 from docopt import docopt
 import numpy as np
 import pandas as pd
-import uuid
-import random
 from scripts.utils.utils import load_yaml
 from scripts.utils import store
 from itertools import product
 from scripts.pruning_models.classification import apply_models
 from scripts.pruning_models.model import calculate_reward_transition_matrices_new, calculate_q_matrix_avpruning, calculate_traces
-import ipdb
+
 # nodes from 0 to 5
 
 

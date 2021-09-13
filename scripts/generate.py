@@ -14,11 +14,10 @@ Outputs:
 from docopt import docopt
 import networkx as nx
 import numpy as np
-import uuid
 import random
 from scripts.utils.utils import load_yaml
 from scripts.utils import store
-import ipdb
+
 # nodes from 0 to 5
 
 
@@ -39,7 +38,7 @@ def parse_link(reward_map, source, target, weight, **_):
     }
 
 
-def parse_network_v2(n_nodes, requiredSolutionLength, missingSolutionPenalty, experiment_name, reward_map, name_map, pos_map, *, nodes, links, graph, network_id, **kwargs):
+def parse_network_v2(n_nodes, reward_map, name_map, pos_map, *, nodes, links, network_id, **kwargs):
     return {
         'type': 'network',
         'version': 'four-rewards-v2',
