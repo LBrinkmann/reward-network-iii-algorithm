@@ -1,6 +1,6 @@
 import pandas as pd
-from mc.utils.array_to_df import using_multiindex
-from mc.pruning_models import torch_model as tm
+from scripts.utils.array_to_df import using_multiindex
+from scripts.pruning_models import torch_model as tm
 import torch as th
 
 
@@ -41,7 +41,8 @@ def calc_regret(
             Q, T, R, ST=ST, beta=beta, device=device, stochastic=stochastic)
         regred = lookahead - rewards
 
-        columns = ['Setting_IDX', 'Network_IDX'] + (['Starting_Node'] if all_starting_nodes else [])
+        columns = ['Setting_IDX', 'Network_IDX'] + \
+            (['Starting_Node'] if all_starting_nodes else [])
         regret_df = using_multiindex(regred.cpu().numpy(), columns)
         if all_starting_nodes:
             regret_df['Environment_IDX'] =  \

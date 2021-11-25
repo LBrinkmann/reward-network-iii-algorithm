@@ -157,8 +157,9 @@ def parse_network_v2(requiredSolutionLength, missingSolutionPenalty, experiment_
 def process(data, preselections, **params):
     df = apply_models(data, **params)
     df = df.set_index(['Model_Name', 'Environment_ID', 'Network_ID', 'Starting_Node', 'Depth'])
+    # ipdb.set_trace()
     dfs = reward_features(df) + node_trace(df) + complexity(df)
-
+    # ipdb.set_trace()
     dfn = pd.concat(dfs, axis=1)
     dfp = all_preselection(dfn, preselections)
 
@@ -169,15 +170,11 @@ def main(parameter_yaml, networks_json, output_folder):
     # modified
     # TODO: finalize modification
     params = load_yaml(parameter_yaml)
-    data = store.load_json(networks_json)
-    #data = {n['network_id']: n for n in data}
-    networks_new = [parse_network_v2(
-        **params['parse_network_v2'], **n) for n in data]
-    # ipdb.set_trace()
-    df = process(networks_new, **params['rest'])
+    networks = store.load_json(networks_json)
+    df = process(networks, **params['rest'])
     df = df.reset_index()
     store.store_df(df, output_folder, 'preselection')
-    print('completed')
+    print('complete')
 
 
 if __name__ == "__main__":

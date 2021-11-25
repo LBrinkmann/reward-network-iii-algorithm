@@ -1,2 +1,3 @@
 .venv
 rw2.egg-info
+*.pyc

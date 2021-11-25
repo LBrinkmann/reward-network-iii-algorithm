@@ -16,8 +16,6 @@ def apply_models(data, model_settings, n_steps, n_nodes=None):
     network_list = []
     for network in data:
         for model_setting in model_settings:
-            print('apply_models')
-            print(network)
             network_list.extend(
                 eval_network(network, n_nodes=n_nodes, n_steps=n_steps, **model_setting)
             )
