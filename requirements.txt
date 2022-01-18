@@ -10,5 +10,6 @@ pyyaml==5.4.1
 scipy==1.6.2
 #cdifflib==1.2.5
 seaborn @ git+https://github.com/mwaskom/seaborn.git@e04b07eb3df135511e71e556c2bd34ef59ba08ba
-torch==1.6.0
+torch==1.7.1
 jupyter
+ipdb
