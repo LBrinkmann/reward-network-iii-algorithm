@@ -1,6 +1,7 @@
 import json
 import yaml
 import sys
+import shutil
 import os
 
 
@@ -35,3 +36,11 @@ def get_subfolders(d):
 
 def get_subfiles(d):
     return [o for o in os.listdir(d)]
+
+
+def make_dir(directory, clean=False):
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    elif clean:
+        shutil.rmtree(directory)
+        os.makedirs(directory)

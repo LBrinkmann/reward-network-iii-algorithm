@@ -45,7 +45,8 @@ def calculate_reward_transition_matrices_new(network, n_nodes):
             one if action from original node leads to destination node, 0 otherwise
 
     """
-    T = np.zeros((n_nodes, n_nodes, 2))  # original node, destination node, action
+    T = np.zeros((n_nodes, n_nodes, 2))  # original node, destination node, action (boolean for link)
+    L = np.zeros((n_nodes, 2), dtype=np.int)  # original node, action (integer for destination node)
     R = np.zeros((n_nodes, 2))  # original node, action
 
     actions = [a for a in network['actions']]
@@ -57,7 +58,8 @@ def calculate_reward_transition_matrices_new(network, n_nodes):
         counter[action['sourceId']] = action_idx + 1
         R[action['sourceId'], action_idx] = action['reward']
         T[action['sourceId'], action['targetId'], action_idx] = 1
-    return T, R
+        L[action['sourceId'], action_idx] = action['targetId']
+    return T, R, L
 
 
 def calculate_reward_transition_matrices(network, n_nodes):
