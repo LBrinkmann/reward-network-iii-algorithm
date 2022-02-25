@@ -1,15 +1,12 @@
-docopt==0.6.2
-matplotlib==3.4.1
-networkx==2.5.1
-numpy==1.20.2
-pandas==1.2.3
-pyarrow==3.0.0
-pymongo==3.11.3
-pyro-ppl==1.5.0
-pyyaml==5.4.1
-scipy==1.6.2
-#cdifflib==1.2.5
-seaborn @ git+https://github.com/mwaskom/seaborn.git@e04b07eb3df135511e71e556c2bd34ef59ba08ba
-torch==1.7.1
+networkx
+numpy
+pandas
+pyarrow
+pyyaml
+scipy
+torch
+torch-scatter
+matplotlib
+seaborn
 jupyter
 ipdb

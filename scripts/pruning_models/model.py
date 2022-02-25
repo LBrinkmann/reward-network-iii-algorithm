@@ -94,7 +94,7 @@ def calculate_q_matrix_avpruning(R, T, n_steps, gamma_g, gamma_s):
 
     """
     n_nodes = T.shape[0]
-    Q = np.zeros((n_steps, n_nodes, 2))  # remaining, original node, action
+    Q = np.full((n_steps, n_nodes, 2), fill_value=-1000)  # remaining, original node, action
     Q[0] = R
     for k in range(n_steps - 1):
         # Q value of all reachable states (with a single action) from a given state
