@@ -1,3 +1,7 @@
+*/**/__pycache__
+*/**/.ipynb_checkpoints
+*.egg-info
+
 .venv
-rw2.egg-info
+.egg-info
 *.pyc
