@@ -1,0 +1,25 @@
+seed: 42
+rewards: [-100, -20, 0, 20, 140]
+colors: ["red", "coral", "lightgrey", "lightgreen", "green"]
+stage_colors:['paleturquoise','lightskyblue','royalblue','blue']
+min_al: 3
+from_to_str : {
+    "(0,0)": [1, 2, 3],
+    "(0,1)": [0],
+    "(1,0)": [1, 2],
+    "(1,1)": [2, 3],
+    "(1,2)": [2, 3],
+    "(2,0)": [1, 2],
+    "(2,1)": [1, 2],
+    "(2,2)": [2, 3],
+    "(2,3)": [2, 3],
+    "(3,0)": [3, 4],
+    "(3,1)": [3, 4],
+    "(3,2)": [3, 4],
+    "(3,3)": [3, 4],
+}
+#output_folder = "../../data/dev"
+n_train : 1000
+n_test : 2
+n_steps : 8
+dataset_name : "dev"

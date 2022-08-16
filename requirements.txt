@@ -5,7 +5,7 @@ pyarrow
 pyyaml
 scipy
 torch
-# torch-scatter
+#torch-scatter
 matplotlib
 seaborn
 jupyter
