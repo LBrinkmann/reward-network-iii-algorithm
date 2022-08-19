@@ -13,20 +13,22 @@ import glob
 import logging
 import json
 import random
+import time
 sns.set_theme()
+
+log_dir = r'C:\Users\Sara Bonati\Desktop\MPI_work\Machines\Reward_network_task\logs\dev'
 
 class Reward_Network(gym.Env):
     
-    def __init__(self, network):
+    def __init__(self, network, to_log=False):
         
         #-------------
         # assert tests
         #-------------
-        assert len(network)>0, f'No reward networks were passed ot the environment class'
 
         # reward network information from json file
         self.network = network
-        
+       
         # initial reward and step values
         self.INIT_REWARD = 0
         self.INIT_STEP = 0
@@ -34,10 +36,20 @@ class Reward_Network(gym.Env):
 
         # network info
         self.id = self.network['network_id']
-        self.nodes = [n['id'] for n in self.network['nodes']]
-        self.action_space = self.network['actions']
+        self.nodes = [n['node_num'] for n in self.network['nodes']]
+        self.action_space = self.network['edges']
         self.possible_rewards = [-100, -20, 0, 20, 140]
         self.reward_range = (min(self.possible_rewards)*self.MAX_STEP,self.network['max_reward'])
+
+        if to_log:
+            # logging info
+            logging_fn = os.path.join(log_dir,f'{self.id}_{time.strftime("%Y_%m-%d_%H-%M-%S")}.log')
+            # start logging:
+            logging.basicConfig(filename=logging_fn, 
+                                level=logging.DEBUG, 
+                                format='%(asctime)s %(message)s',
+                                datefmt='%d/%m/%Y %H:%M:%S')
+
     
 
     def reset(self):
@@ -48,20 +60,26 @@ class Reward_Network(gym.Env):
         
         # Set the current step to the starting node of the graph
         self.current_node = self.network['starting_node'] #self.G[0]['starting_node']
-
+        logging.info(f'NETWORK {self.id} \n')
+        logging.info(f'INIT: Reward balance {self.reward_balance}, n_steps done {self.step_counter}')
 
 
     def step(self, action):
         # Execute one time step within the environment
         #self._take_action(action)
-        self.source_node = action['sourceId']
+        self.source_node = action['source_id']
         self.reward_balance += action['reward']
-        self.current_node = action['targetId']
+        self.current_node = action['target_id']
         self.step_counter += 1
 
         if self.step_counter == 8:
             self.is_done = True
-        
+           
+
+        logging.info(f'Step {self.step_counter} : we go from node {self.source_node} to node {self.current_node}')
+        logging.info(f'Reward for this edge: {action["reward"]} (in total {self.reward_balance})')
+        logging.info(f'DONE? {self.is_done})')
+
         return {'source_node':self.source_node,
                 'current_node':self.current_node,
                 'reward':action['reward'],
@@ -83,20 +101,3 @@ class Reward_Network(gym.Env):
         # Render the environment to the screen
         print('TODO')
 
-
-if __name__ == 'main':
-
-    with open(r'C:\Users\Sara Bonati\Desktop\MPI work\Machines\Reward_network_task\data\dev\train.json') as json_file:
-        networks = json.load(json_file)
-
-    env = Reward_Network(networks[0])
-    env.reset()
-
-    print(f'START \n We are in node {env.current_node}')
-
-    while env.is_done==False:
-        print(env.observe())
-        print('\n')
-        random_action = random.choice([a for a in env.action_space if a['sourceId']==env.current_node])
-        obs = env.step(random_action)
-        print(obs)

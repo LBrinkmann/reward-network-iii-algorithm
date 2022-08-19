@@ -21,10 +21,10 @@ def parse_network(network):
             one if action from original node leads to destination node, 0 otherwise
 
     """
-    actions = network['actions']
+    actions = network['edges']
     edges = th.tensor(
         [
-            [action['sourceId'], action['targetId']]
+            [action['source_id'], action['target_id']]
             for action in actions
         ]
     )
