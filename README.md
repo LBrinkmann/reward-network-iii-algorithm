@@ -2,9 +2,12 @@
 
 ## Install required packages
 
-```
+```bash
 python3 -m venv .venv
-. .venv/bin/activate
+# Mac/Linux
+. .venv/bin/activate 
+# Windows
+# source .venv/Scripts/Activate 
 pip install --upgrade pip
 pip install wheel
 pip install -r requirements.txt
@@ -25,7 +28,7 @@ pip install -r requirements.txt
 ## Workflow
 ```mermaid
 
-flowchart LR
+flowchart TD
 
 subgraph Generation
 A(params/generation.yml) --> B(notebooks/generation.ipynb)
@@ -40,7 +43,14 @@ D(params/environment.yml) --> E(notebooks/environment.py)
 E(notebooks/environment.py) --> F(notebooks/rule_based.ipynb)
 end
 
+subgraph DQN
+G(params/dqn.yml) --> H(notebooks/dqn.py)
+H(notebooks/dqn.py) --> I(notebooks/dqn_submit_job.sh)
+end
+
+
 Generation --> Rule_based_Agents
+Generation --> DQN
 
 ```
 
