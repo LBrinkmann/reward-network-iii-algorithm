@@ -88,11 +88,25 @@ class Reward_Network(gym.Env):
                 'done':self.is_done}
 
 
+    def get_state(self):
+        """
+        this function returns the current state of the environment.
+        State information given by this funciton is less detailed compared
+        to the observation. 
+        """
+        return {'current_node':self.current_node,
+                'total_reward':self.reward_balance,
+                'n_steps':self.step_counter,
+                'done':self.is_done}
+
     def observe(self):
         """
         this function returns observation from the environment
         """
         return {'current_node':self.current_node,
+                'actions_available':[n for n in self.action_space if n['source_id'] == self.current_node],
+                'next_possible_nodes':np.asarray([n['target_id'] for n in self.action_space if n['source_id'] == self.current_node]),
+                'next_possible_rewards':np.asarray([n['reward'] for n in self.action_space if n['source_id'] == self.current_node]),
                 'total_reward':self.reward_balance,
                 'n_steps':self.step_counter,
                 'done':self.is_done}
@@ -101,3 +115,12 @@ class Reward_Network(gym.Env):
         # Render the environment to the screen
         print('TODO')
 
+
+# For quick testing purposes, comment out if not needed
+
+#with open(os.path.join(r'C:\Users\Sara Bonati\Desktop\MPI_work\Machines\Reward_network_task\data\rawdata','test2.json')) as json_file:
+#    test = json.load(json_file)
+#env_test = Reward_Network(test[0])
+#env_test.reset()
+#print(env_test.get_state())
+#print(env_test.observe())
