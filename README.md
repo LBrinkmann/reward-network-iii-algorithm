@@ -45,7 +45,7 @@ end
 
 subgraph DQN
 G(params/dqn.yml) --> H(notebooks/dqn.py)
-H(notebooks/dqn.py) --> I(notebooks/dqn_submit_job.sh)
+H(notebooks/dqn.py) --> I(cluster/submit_dqn_job.sh)
 end
 
 
