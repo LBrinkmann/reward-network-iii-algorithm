@@ -15,20 +15,19 @@
 method="dqn" 
 
 # -------Directory and filename (fn) management-------------------------------
-# roots
 home_dir="/mnt/beegfs/home/bonati"
 project_dir="${home_dir}/CHM/reward_network"
 code_dir="${project_dir}/reward-network-iii-algorithm"
 data_dir="${project_dir}/data"
 
-# script path
-main_script_fn=${code_dir}/notebooks/dqn_agent.py
 
 # output parent directories
 if [[ "${method}" == "dqn" ]]; then
-    output_dir="${data_dir}/solutions"
-    log_dir="${project_dir}/logs"
-    main_script_fn="${code_dir}/kamel.py"
+  output_dir="${data_dir}/solutions"
+  log_dir="${project_dir}/logs"
+  # script path
+  main_script_fn=${code_dir}/notebooks/dqn_agent.py
+fi
 
 # Create directories if non-existent
 if [[ ! -d "${output_dir}" ]]; then
