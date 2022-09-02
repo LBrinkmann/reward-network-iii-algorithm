@@ -1,3 +1,2 @@
-project_folder: c:\\Users\\Sara Bonati\\Desktop\\MPI work\\Machines\\Reward_network_task
+project_folder: ../..
 solution_columns: ['network_id','strategy','step','source_node','current_node','reward','total_reward']
-#network_folder: ../../data/dev
