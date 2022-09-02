@@ -11,3 +11,4 @@ seaborn
 jupyter
 ipdb
 papermill
+gym
