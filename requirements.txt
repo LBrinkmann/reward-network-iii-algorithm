@@ -11,3 +11,5 @@ seaborn
 jupyter
 ipdb
 papermill
+pydantic
+statsmodels
