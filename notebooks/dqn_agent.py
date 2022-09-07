@@ -1,4 +1,4 @@
-# This file specifices the Deep Q Learning AI agent model to solve a DAG
+# This file specifices the Deep Q Learning AI agent model to solve a Reward Network DAG
 # See also: https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
 # and: https://pytorch.org/tutorials/intermediate/mario_rl_tutorial.html
 #
@@ -9,9 +9,9 @@
 ###############################################
 
 # import modules
-import numpy as numpy
+import numpy as np
 import pandas as pd
-from collections import namedtuple, deque, COunter
+from collections import namedtuple, deque, Counter
 from itertools import count
 from tqdm import tqdm
 import math
@@ -19,6 +19,8 @@ import random
 import glob
 import logging
 import re
+import sys
+import os
 import time,datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -28,8 +30,9 @@ import torch
 import torch.nn as nn               # layers 
 import torch.optim as optim         # optimizers
 import torch.nn.functional as F     # 
-import torchvision.transforms as T  # transforms to be used on e.g. image data
 
+# import the custom reward network environment class
+from environment import Reward_Network
 
 #######################################
 ## Initialize agent
@@ -87,7 +90,7 @@ class DQN_agent:
         Given a state, choose an epsilon-greedy action (explore) or use DNN to
         select the action which, given $S=s$, is associated to highest $Q(s,a)$
         Inputs:
-        - state (tuple or list??): A single observation of the current state, dimension is (state_dim)
+        - state (tuple or list??): A single observation of the current state, shape is (state_dim)
         Outputs:
         - action_idx (int): An integer representing which action the AI agent will perform
         """
@@ -100,7 +103,7 @@ class DQN_agent:
         if np.random.rand() < self.exploration_rate:
             action_idx = np.random.randint(self.action_dim)
 
-        # EXPLOIT
+        # or EXPLOIT
         else:
             self.state = state.__array__()
             if self.use_cuda:
@@ -128,10 +131,10 @@ class DQN_agent:
         Add the experience/ transition from one state to another,
         along with action and reward info, to memory
         Inputs:
-        - state: tuple of (node number, step number)
-        - next_state: tuple of (node number, step number)
-        - action: (int) a \in [0,1], where 0='left' and 1='right'
-        - reward: (int) r \in {-100,-20,20,140}
+        - state: 
+        - next_state: 
+        - action: 
+        - reward: (int) r \in {-100,-20,0,20,140}
         - done: bool indicator of whether step_number>8
         """
         # assert tests
@@ -178,7 +181,7 @@ class DQN_agent:
         ]  # Q_online(s,a)
         return current_Q
 
-    # note that we don't want to update target net parameters by backprop (hence the torch no grad),
+    # note that we don't want to update target net parameters by backprop (hence the torch.no_grad),
     # instead the online net parameters will take the place of the target net parameters periodically
     @torch.no_grad()
     def td_target(self, reward, next_state, done):
@@ -196,7 +199,7 @@ class DQN_agent:
 
     def update_Q_online(self, td_estimate, td_target):
         """
-        This function updates the patameters of the "online" DNN by means of backpropagation.
+        This function updates the patameters of the "online" DQN by means of backpropagation.
         The loss value is given by the (td_estimate - td_target)
 
         \theta_{online} <- \theta_{online} + \alpha((TD_estimate - TD_target))
@@ -428,7 +431,7 @@ if __name__ == "__main__":
         datefmt='%d/%m/%Y %H:%M:%S')
 
     # Add basic script information to the logger
-    logging.info("------Start Running kamel.py------")
+    logging.info("------Start Running dqn_agent.py------")
     logging.info(f"Operating system: {sys.platform}\n")
 
     # ---------Start analysis------------------------------
@@ -438,7 +441,10 @@ if __name__ == "__main__":
         # specify if cuda is available
         use_cuda = torch.cuda.is_available()
         logging.info(f"Using CUDA: {use_cuda} \n")
-
+        
+        # initialize environment
+        env = Reward_Network(network)
+        
         # initialize Agent + Logger
         AI_agent = DQN_agent(state_dim=(4, 84, 84), action_dim=env.action_space.n, save_dir=save_dir)
         logger = MetricLogger(save_dir)
