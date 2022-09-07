@@ -15,8 +15,8 @@ import json
 import random
 import time
 sns.set_theme()
+from stable_baselines3.common.env_checker import check_env
 
-log_dir = r'C:\Users\Sara Bonati\Desktop\MPI_work\Machines\Reward_network_task\logs\dev'
 
 class Reward_Network(gym.Env):
     
@@ -43,7 +43,7 @@ class Reward_Network(gym.Env):
 
         if to_log:
             # logging info
-            logging_fn = os.path.join(log_dir,f'{self.id}_{time.strftime("%Y_%m-%d_%H-%M-%S")}.log')
+            logging_fn = os.path.join('../../logs',f'{self.id}_{time.strftime("%Y_%m-%d_%H-%M-%S")}.log')
             # start logging:
             logging.basicConfig(filename=logging_fn, 
                                 level=logging.DEBUG, 
@@ -118,9 +118,10 @@ class Reward_Network(gym.Env):
 
 # For quick testing purposes, comment out if not needed
 
-#with open(os.path.join(r'C:\Users\Sara Bonati\Desktop\MPI_work\Machines\Reward_network_task\data\rawdata','test2.json')) as json_file:
-#    test = json.load(json_file)
-#env_test = Reward_Network(test[0])
+with open(os.path.join('/Users/bonati/Desktop/CHM/reward_networks/data/rawdata','test.json')) as json_file:
+    test = json.load(json_file)
+env_test = Reward_Network(test[0])
+check_env(env_test)
 #env_test.reset()
 #print(env_test.get_state())
 #print(env_test.observe())
