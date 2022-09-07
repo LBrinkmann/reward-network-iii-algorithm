@@ -4,11 +4,8 @@ import os
 import subprocess
 
 
-#dev_param_dir = 'params/dev'
-#notebook_dir = 'notebooks'
-dev_param_dir = r'C:\Users\Sara Bonati\Desktop\MPI work\Machines\Reward_network_task\reward-network-iii-algorithm\params\dev'
-notebook_dir = r'C:\Users\Sara Bonati\Desktop\MPI work\Machines\Reward_network_task\reward-network-iii-algorithm\notebooks'
-
+dev_param_dir = 'params/dev'
+notebook_dir = 'notebooks'
 
 def load_yaml(filename):
     with open(filename) as f:
