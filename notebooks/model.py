@@ -24,7 +24,7 @@ def parse_network(network):
     actions = network['edges']
     edges = th.tensor(
         [
-            [action['source_id'], action['target_id']]
+            [action['source_num'], action['target_num']]
             for action in actions
         ]
     )
