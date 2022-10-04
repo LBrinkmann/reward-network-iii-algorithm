@@ -16,7 +16,7 @@ pip install -r requirements.txt
 ## Run
 
 ```
-
+TODO
 ```
 
 ## Repo organization
@@ -24,34 +24,49 @@ pip install -r requirements.txt
 * **models**: includes `.py` files used for parsing and validation of JSON data
 * **params**: includes `.yml` files for each file in notebooks specifying parameters
 * **rn**: includes utilities used in the scripts in `notebooks` folder
+* **data**: includes json files where all generated reward networks used in the experiment are stored. The `_viz` suffix in the file names indicate those data files that have additional node location information (for frontend vizualization purposes)
+
 
 ## Workflow
+### Network generation
 ```mermaid
 
 flowchart TD
 
 subgraph Generation
 A(params/generation.yml) --> B(notebooks/generation.ipynb)
-B(notebooks/generation.ipynb) --> C(train.json)
-B(notebooks/generation.ipynb) --> X(test.json)
-W(models/network.py) --> C(train.json)
-W(models/network.py) --> X(test.json)
+W(models/network.py) --> B(notebooks/generation.ipynb)
+H(notebooks/models.py) --> B(notebooks/generation.ipynb)
+G(notebooks/utils.py) --> B(notebooks/generation.ipynb)
+B(notebooks/generation.ipynb) --> C(data/train.json)
+B(notebooks/generation.ipynb) --> X(data/test.json)
 end
+```
 
-subgraph Rule_based_Agents
-D(params/environment.yml) --> E(notebooks/environment.py) 
-E(notebooks/environment.py) --> F(notebooks/rule_based.ipynb)
+### Rule-based strategy comparisons
+```mermaid
+
+flowchart TD
+
+subgraph Rule-based
+A(params/environment.yml) --> L(notebooks/environment.py)
+L(notebooks/environment.py) --> B(notebooks/rule_based.ipynb)
+C(data/train.json) --> B(notebooks/rule_based.ipynb)
+C(data/train.json) --> D(notebooks/try_vectorization.ipynb)
 end
+```
+
+### DQN 
+```mermaid
+
+flowchart TD
 
 subgraph DQN
-G(params/dqn.yml) --> H(notebooks/dqn.py)
-H(notebooks/dqn.py) --> I(cluster/submit_dqn_job.sh)
+A(params/dqn_agent.yml) --> B(notebooks/dqn_agent.py)
+D(notebooks/environment_vect.py) --> B(notebooks/dqn_agent.py)
+C(data/train.json) --> B(notebooks/dqn_agent.py) 
 end
-
-
-Generation --> Rule_based_Agents
-Generation --> DQN
-
 ```
+
 
 
