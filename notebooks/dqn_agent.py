@@ -1,6 +1,6 @@
 # This file specifices the Deep Q Learning AI agent model to solve a Reward Network DAG
-# See also: https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
-# and: https://pytorch.org/tutorials/intermediate/mario_rl_tutorial.html
+# See also: https://pyth.org/tutorials/intermediate/reinforcement_q_learning.html
+# and: https://pyth.org/tutorials/intermediate/mario_rl_tutorial.html
 #
 #
 # Author @ Sara Bonati
@@ -21,51 +21,74 @@ import logging
 import re
 import sys
 import os
+import json
 import time,datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
+from typing import Optional
+# TODO: specify custom types for state and action of env
 
 # import Pytorch modules
-import torch
+import torch as th
 import torch.nn as nn               # layers 
 import torch.optim as optim         # optimizers
 import torch.nn.functional as F     # 
 
 # import the custom reward network environment class
-from environment import Reward_Network
+from environment_vect import Reward_Network
+
+#######################################
+## Initialize NN TODO: adapt to our task
+#######################################
+
+class DQN(nn.Module):
+
+    def __init__(self, input_size, output_size, hidden_size):
+        super(DQN, self).__init__()
+
+        self.linear1 = nn.Linear(in_features=input_size, out_features=hidden_size)
+        self.linear2 = nn.Linear(in_features=hidden_size, out_features=output_size)
+
+    def reset(self):
+        self.hidden = None
+
+    def forward(self, obs):
+        # evaluate q values for valid actions
+        x = F.relu(self.linear1(obs['obs']))
+        q = F.relu(self.linear2(x))
+        
+        # set q values of invalid actions to be very low TODO: check
+        q[~obs['mask']] = -1000
+        return q
+
 
 #######################################
 ## Initialize agent
 #######################################
 
-class DQN_agent:
-    def __init__(self, state_dim: int, action_dim: int, save_dir: str):
+class Agent:
+    def __init__(self, obs_dim: int, action_dim: tuple, save_dir: str):
         
         # assert tests
         # TODO
 
         # specify environment parameters
-        self.state_dim = state_dim
+        self.obs_dim = obs_dim
         self.action_dim = action_dim
 
-        # specify DNN used by the agent in training and learning Q(s,a) from experience 
+        # specify DNNs used by the agent in training and learning Q(s,a) from experience 
         # to predict the most optimal action - we implement this in the Learn section
-        # two DNNs - Q_{online} and Q_{target}- that independently approximate the 
-        # optimal action-value function.
-        self.net = DQN(self.state_dim, self.action_dim).float()
+        # two DNNs - policy net with Q_{online} and target net with Q_{target}- that 
+        # independently approximate the optimal action-value function.
+        self.policy_net = DQN(1,1,1)
+        self.target_net = DQN(1,1,1)
 
-        # specify \epsilon greedy policy exploration parameters 
-        # relevant in exploration
+        # specify \epsilon greedy policy exploration parameters (relevant in exploration)
         self.exploration_rate = 1
         self.exploration_rate_decay = 0.99999975
         self.exploration_rate_min = 0.1
         self.curr_step = 0
         
-        # specify experience replay and memory buffer parameters
-        self.memory = deque(maxlen=100000)
-        self.save_every = 5e5  # no. of experiences between saving 
-        self.batch_size = 32
-
         # specify \gamma parameter (how far-sighted our agent is)
         self.gamma = 0.9
 
@@ -73,52 +96,52 @@ class DQN_agent:
         self.burnin = 1e4  # min. experiences before training
         self.learn_every = 3  # no. of experiences between updates to Q_online
         self.sync_every = 1e4  # no. of experiences between Q_target & Q_online sync
+        self.save_every = 1e4  # no. of experiences between Q_target & Q_online sync
 
         # specify which loss function and which optimizer to use (and their respective params)
         self.lr = 0.00025
-        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
-        self.loss_fn = torch.nn.SmoothL1Loss()
+        self.optimizer = th.optim.Adam(self.policy_net.parameters(), lr=self.lr)
+        self.loss_fn = th.nn.SmoothL1Loss()
 
         # specify output directory
         self.save_dir = save_dir
 
-        # specify if cuda is available
-        self.use_cuda = torch.cuda.is_available()
 
-    def act(self, state):
+    def act(self, obs):
         """
-        Given a state, choose an epsilon-greedy action (explore) or use DNN to
+        Given a observation, choose an epsilon-greedy action (explore) or use DNN to
         select the action which, given $S=s$, is associated to highest $Q(s,a)$
         Inputs:
-        - state (tuple or list??): A single observation of the current state, shape is (state_dim)
+        - obs (dict with values of th.tensor): Observation of the current state - current nodes - and boolean mask of next possible nodes, shape is (state_dim)
         Outputs:
-        - action_idx (int): An integer representing which action the AI agent will perform
+        - action_idx (th.tensor): An integer representing which action the AI agent will perform
         """
         # assert tests
-        assert len(state) == self.state_dim and isinstance(state, list), \
-            f"Wrong length of state representation: expected {self.state_dim}, got: {len(state)}"
+        assert len(obs) == self.obs_dim and isinstance(obs, dict), \
+            f"Wrong length of state representation: expected dict of size {self.obs_dim}, got: {len(obs)}"
 
+        # for the moment keep a random action selection strategy to mock agent choosing action
+        action_idx = th.squeeze(th.multinomial(obs['mask'].type(th.float),1))
 
-        # EXPLORE (select random action from the action space)
-        if np.random.rand() < self.exploration_rate:
-            action_idx = np.random.randint(self.action_dim)
+        # # EXPLORE (select random action from the action space)
+        # if np.random.rand() < self.exploration_rate:
+        #     #action_idx = np.random.randint(self.action_dim) 
+        #     action_idx = th.squeeze(th.multinomial(obs['mask'].type(th.float),1))
 
-        # or EXPLOIT
-        else:
-            self.state = state.__array__()
-            if self.use_cuda:
-                self.state = torch.tensor(self.state).cuda()
-            else:
-                self.state = torch.tensor(self.state)
-            self.state = self.state.unsqueeze(0)
-            # return Q values for each action in the action space | S=s
-            self.action_values = self.net(self.state, model="online")
-            # select action with highest Q value
-            self.action_idx = torch.argmax(self.action_values, axis=1).item()
+        # # or EXPLOIT
+        # else:
+        #     if self.use_cuda:
+        #         obs = obs.cuda()
 
-        # decrease exploration_rate
-        self.exploration_rate *= self.exploration_rate_decay
-        self.exploration_rate = max(self.exploration_rate_min, self.exploration_rate)
+        #     # return Q values for each action in the action space | S=s
+        #     # each POSSIBLE action in action space | S=s 
+        #     action_values = self.policy_net(obs)
+        #     # select action with highest Q value
+        #     action_idx = th.argmax(action_values, axis=1).item()
+
+        # # decrease exploration_rate
+        # self.exploration_rate *= self.exploration_rate_decay
+        # self.exploration_rate = max(self.exploration_rate_min, self.exploration_rate)
 
         # increment step
         self.curr_step += 1
@@ -126,88 +149,56 @@ class DQN_agent:
         return action_idx
 
 
-    def cache(self, state, next_state, action, reward, done):
-        """
-        Add the experience/ transition from one state to another,
-        along with action and reward info, to memory
-        Inputs:
-        - state: 
-        - next_state: 
-        - action: 
-        - reward: (int) r \in {-100,-20,0,20,140}
-        - done: bool indicator of whether step_number>8
-        """
-        # assert tests
-        assert len(state)==2, f'expected a tuple of (state,step number), got {len(state)}'
-        assert self.node_ids.count(state(0))>0, f'expected a node id between A and F, got node {state(0)}'
-        assert self.action_space.count(action)>0, f'expected an action between 0 (left) and 1 (right), got {state(1)}'
-
-
-        state = state.__array__()
-        next_state = next_state.__array__()
-
-        if self.use_cuda:
-            state = torch.tensor(state).cuda()
-            next_state = torch.tensor(next_state).cuda()
-            action = torch.tensor([action]).cuda()
-            reward = torch.tensor([reward]).cuda()
-            done = torch.tensor([done]).cuda()
-        else:
-            state = torch.tensor(state)
-            next_state = torch.tensor(next_state)
-            action = torch.tensor([action])
-            reward = torch.tensor([reward])
-            done = torch.tensor([done])
-
-        self.memory.append((state, next_state, action, reward, done,))
-
-    def recall(self):
-        """
-        Retrieve a batch of (batch_size) experiences/transitions 
-        from memory
-        """
-        batch = random.sample(self.memory, self.batch_size)
-        state, next_state, action, reward, done = map(torch.stack, zip(*batch))
-        return state, next_state, action.squeeze(), reward.squeeze(), done.squeeze()
-
     def td_estimate(self, state, action):
         """
         This function returns the temporal difference estimate for a (state,action) pair.
-        In other words, it returns the predicted optimal $Q^*$ for a given state s
+        In other words, it returns the predicted optimal $Q^*$ for a given state s - action a pair
         """
-        # we use the online model here
-        current_Q = self.net(state, model="online")[
-            np.arange(0, self.batch_size), action
-        ]  # Q_online(s,a)
+        # we use the online model here we get Q_online(s,a)
+        current_Q = self.policy_net(state)#[np.arange(0, self.batch_size), action] 
         return current_Q
 
-    # note that we don't want to update target net parameters by backprop (hence the torch.no_grad),
+    # note that we don't want to update target net parameters by backprop (hence the th.no_grad),
     # instead the online net parameters will take the place of the target net parameters periodically
-    @torch.no_grad()
-    def td_target(self, reward, next_state, done):
+    @th.no_grad()
+    def td_target(self, reward, next_state):
+        """
+        This function returns the expected Q values, that is 
+        Q <- E_{policy} ()
+        """
 
         # Because we don’t know what next action a' will be, 
         # we use the action a' that maximizes Q_{online} in the next state s'
- 
-        next_state_Q = self.net(next_state, model="online")
-        best_action = torch.argmax(next_state_Q, axis=1)
-        next_Q = self.net(next_state, model="target")[
-            np.arange(0, self.batch_size), best_action
-        ]
-        return (reward + (1 - done.float()) * self.gamma * next_Q).float()
+        next_state_Q = self.policy_net(next_state)
+        best_action = th.argmax(next_state_Q, axis=1)
+        
+        next_Q = th.zeros_like(reward, device=self.device)
+        # we skip the first observation and set the future value for the terminal
+        # state to 0
+        next_Q[:, :-1] = self.target_net(next_state)[:, 1:].max(-1)[0].detach()
+        
+        return reward + (self.gamma * next_Q)
 
 
     def update_Q_online(self, td_estimate, td_target):
         """
-        This function updates the patameters of the "online" DQN by means of backpropagation.
+        This function updates the parameters of the "online" DQN by means of backpropagation.
         The loss value is given by the (td_estimate - td_target)
 
         \theta_{online} <- \theta_{online} + \alpha((TD_estimate - TD_target))
         """
+
+        # calculate loss, defined as TD_estimate - TD_target,
+        # then do gradient descent step to try to minimize loss
         loss = self.loss_fn(td_estimate, td_target)
         self.optimizer.zero_grad()
         loss.backward()
+
+        # truncate large gradients as in original DQN paper TODO: finish
+        for param in self.policy_net.parameters():
+            param.grad.data.clamp_(-1, 1)
         self.optimizer.step()
+        
         return loss.item()
 
     def sync_Q_target(self):
@@ -215,25 +206,30 @@ class DQN_agent:
         This function periodically copies \theta_online parameters 
         to be the \theta_target parameters
         """
-        self.net.target.load_state_dict(self.net.online.state_dict())
+        self.target_net.load_state_dict(self.policy_net.state_dict())
     
     def save(self):
         """
         This function saves model checkpoints
         """
-        save_path = (self.save_dir / f"Reward_network_iii_dqn_model_{int(self.curr_step // self.save_every)}.chkpt")
-        torch.save(dict(model=self.net.state_dict(),
-                        exploration_rate=self.exploration_rate),
-                   save_path)
+        save_path = os.path.join(self.save_dir,f"Reward_network_iii_dqn_model_{int(self.curr_step // self.save_every)}.chkpt")
+        th.save(dict(model=self.policy_net.state_dict(),
+                     exploration_rate=self.exploration_rate),
+                     save_path)
         print(f"Reward_network_iii_dqn_model checkpoint saved to {save_path} at step {self.curr_step}")
 
-    def learn(self):
+    def learn(self,sample):
         """
         Update online action value (Q) function with a batch of experiences
+        Inputs:
+        - sample (dict with values as th.tensors): sample from Memory buffer object
         """
+
+        # if applicable update target net parameters
         if self.curr_step % self.sync_every == 0:
             self.sync_Q_target()
 
+        # if applicable save model checkpoints
         if self.curr_step % self.save_every == 0:
             self.save()
 
@@ -243,14 +239,16 @@ class DQN_agent:
         if self.curr_step % self.learn_every != 0:
             return None, None
 
-        # Sample from memory
-        state, next_state, action, reward, done = self.recall()
+        # Break down Memory buffer sample TODO: finish
+        state = sample['obs']
+        next_state = sample['obs']
+        action = sample['action']
+        reward = sample['reward']
 
         # Get TD Estimate
         td_est = self.td_estimate(state, action)
-
         # Get TD Target
-        td_tgt = self.td_target(reward, next_state, done)
+        td_tgt = self.td_target(reward, next_state)#, done)
 
         # Backpropagate loss through Q_online
         loss = self.update_Q_online(td_est, td_tgt)
@@ -259,34 +257,95 @@ class DQN_agent:
 
 
 #######################################
-## Initialize DQN TODO: adapt to our task
+## Initialize Memory buffer class
+# a data structure which temporarily saves the agent’s observations,
+# allowing our learning procedure to update on them multiple times
 #######################################
-# history as additional input for the model
-# observation!!
-# state is (node,step), 
-# action space only L,R or more actions? action space -> all possible edges, Q value 
+
+class Memory():
+    """Storage for observation of a DQN agent.
+
+    Observations are stored large continuous tensor.
+    The tensor are automatically initialized upon the first call of store().
+    Important: all tensors to be stored need to be passed at the first call of
+    the store. Also the shape of tensors to be stored needs to be consistent.
 
 
-#edge -> (reward, step i am in, how many large losses yet), output Q value for each outgoing edge
-#input dims (batch, edges, feature vector)
+    Typical usage:
+        mem = Memory(...)
+        for episode in range(n_episodes):
+            obs = env.init()
+            for round in range(n_rounds):
+                action = agent(obs)
+                next_obs, reward = env.step()
+                mem.store(**obs, reward=reward, action=action)
+                obs = next_obs
+            mem.finish_episode()
 
+            sample = mem.sample()
+            update_agents(sample)
+    """
 
-class DQN(nn.Module):
+    def __init__(self, device, size, n_rounds):
+        """
+            Args:
+                device: device for the memory
+                size: number of episodes to store
+                n_rounds; number of rounds to store per episode
+        """
+        self.memory = None
+        self.size = size
+        self.n_rounds = n_rounds
+        self.device = device
+        self.current_row = 0
+        self.episodes_stored = 0
 
-    def __init__(self, input_size, output_size, hidden_size):
-        super(DQN, self).__init__()
-        self.linear1 = nn.Linear(in_features=input_size, out_features=hidden_size)
-        self.rnn = nn.GRU(input_size=hidden_size, hidden_size=hidden_size, batch_first=True)
-        self.linear2 = nn.Linear(in_features=hidden_size, out_features=output_size)
+    def init_store(self, obs):
+        """
+        Initialize the memory tensor.  
+        """
+        self.memory = {k: th.zeros((self.size, self.n_rounds, *t.shape),
+                                   dtype=t.dtype, device=self.device)
+                       for k, t in obs.items() if t is not None}
 
-    def reset(self):
-        self.hidden = None
+    def finish_episode(self):
+        """Moves the currently active slice in memory to the next episode.
+        """
+        self.episodes_stored += 1
+        self.current_row = (self.current_row + 1) % self.size
 
-    def forward(self, obs):
-        x = F.relu(self.linear1(obs))
-        h, self.hidden = self.rnn(x, self.hidden)
-        q = self.linear2(h)
-        return q
+    def store(self, round, **state):
+        """Stores multiple tensor in the memory.
+        """
+        # if empty initialize tensors
+        if self.memory is None:
+            self.init_store(state)
+
+        for k, t in state.items():
+            if t is not None:
+                self.memory[k][self.current_row, round] = t.to(self.device)
+
+    def sample(self, batch_size, device, **kwargs):
+        """Samples form the memory.
+
+        Returns:
+            dict | None: Dict being stored. If the batch size is larger than the number
+            of episodes stored 'None' is returned.
+        """
+        if len(self) < batch_size:
+            return None
+        random_memory_idx = th.randperm(len(self))[:batch_size]
+        print(f'random_memory_idx', random_memory_idx)
+
+        sample = {k: v[random_memory_idx].to(device) for k, v in self.memory.items()}
+        return sample
+
+    def __len__(self):
+        """The current memory usage, i.e. the number of valid episodes in
+        the memory.This increases as episodes are added to the memory until the
+        maximum size of the memory is reached.
+        """
+        return min(self.episodes_stored, self.size)
 
 
 #######################################
@@ -295,29 +354,29 @@ class DQN(nn.Module):
 
 class MetricLogger:
     def __init__(self, save_dir):
-        self.save_log = save_dir / "log"
-        with open(self.save_log, "w") as f:
-            f.write(
-                f"{'Episode':>8}{'Step':>8}{'Epsilon':>10}{'MeanReward':>15}"
-                f"{'MeanLength':>15}{'MeanLoss':>15}{'MeanQValue':>15}"
-                f"{'TimeDelta':>15}{'Time':>20}\n"
-            )
-        self.ep_rewards_plot = save_dir / "reward_plot.jpg"
-        self.ep_lengths_plot = save_dir / "length_plot.jpg"
-        self.ep_avg_losses_plot = save_dir / "loss_plot.jpg"
-        self.ep_avg_qs_plot = save_dir / "q_plot.jpg"
-
+                
         # History metrics
+        self.history_metrics = {'ep_rewards':[],
+                                'ep_lengths':[],
+                                'ep_avg_losses':[],
+                                'ep_avg_qs':[]}
         self.ep_rewards = []
         self.ep_lengths = []
         self.ep_avg_losses = []
         self.ep_avg_qs = []
 
         # Moving averages, added for every call to record()
+        self.moving_avg = {'ep_rewards':[],
+                           'ep_lengths':[],
+                           'ep_avg_losses':[],
+                           'ep_avg_qs':[]}
         self.moving_avg_ep_rewards = []
         self.moving_avg_ep_lengths = []
         self.moving_avg_ep_avg_losses = []
         self.moving_avg_ep_avg_qs = []
+
+        # number of episodes to consider to calculate mean episode {current_metric}
+        self.take_n_episodes = 5
 
         # Current episode metric
         self.init_episode()
@@ -326,6 +385,9 @@ class MetricLogger:
         self.record_time = time.time()
 
     def log_step(self, reward, loss, q):
+        """
+        To be called at every transition within an episode
+        """
         self.curr_ep_reward += reward
         self.curr_ep_length += 1
         if loss:
@@ -334,21 +396,28 @@ class MetricLogger:
             self.curr_ep_loss_length += 1
 
     def log_episode(self):
-        "Mark end of episode"
-        self.ep_rewards.append(self.curr_ep_reward)
-        self.ep_lengths.append(self.curr_ep_length)
+        """
+        Mark end of episode
+        """
+        
+        self.history_metrics['ep_rewards'].append(self.curr_ep_reward)
+        self.history_metrics['ep_lengths'].append(self.curr_ep_length)
         if self.curr_ep_loss_length == 0:
             ep_avg_loss = 0
             ep_avg_q = 0
         else:
             ep_avg_loss = np.round(self.curr_ep_loss / self.curr_ep_loss_length, 5)
             ep_avg_q = np.round(self.curr_ep_q / self.curr_ep_loss_length, 5)
-        self.ep_avg_losses.append(ep_avg_loss)
-        self.ep_avg_qs.append(ep_avg_q)
+        self.history_metrics['ep_avg_losses'].append(ep_avg_loss)
+        self.history_metrics['ep_avg_qs'].append(ep_avg_q)
 
+        # reset values to zero
         self.init_episode()
 
     def init_episode(self):
+        """
+        Initialize current metrics values
+        """
         self.curr_ep_reward = 0.0
         self.curr_ep_length = 0
         self.curr_ep_loss = 0.0
@@ -356,122 +425,154 @@ class MetricLogger:
         self.curr_ep_loss_length = 0
 
     def record(self, episode, epsilon, step):
-        mean_ep_reward = np.round(np.mean(self.ep_rewards[-100:]), 3)
-        mean_ep_length = np.round(np.mean(self.ep_lengths[-100:]), 3)
-        mean_ep_loss = np.round(np.mean(self.ep_avg_losses[-100:]), 3)
-        mean_ep_q = np.round(np.mean(self.ep_avg_qs[-100:]), 3)
-        self.moving_avg_ep_rewards.append(mean_ep_reward)
-        self.moving_avg_ep_lengths.append(mean_ep_length)
-        self.moving_avg_ep_avg_losses.append(mean_ep_loss)
-        self.moving_avg_ep_avg_qs.append(mean_ep_q)
+
+        print(self.history_metrics['ep_rewards'])
+        mean_ep_reward = np.round(np.mean(self.history_metrics['ep_rewards'][-self.take_n_episodes:]), 3)
+        mean_ep_length = np.round(np.mean(self.history_metrics['ep_lengths'][-self.take_n_episodes:]), 3)
+        mean_ep_loss = np.round(np.mean(self.history_metrics['ep_avg_losses'][-self.take_n_episodes:]), 3)
+        mean_ep_q = np.round(np.mean(self.history_metrics['ep_avg_qs'][-self.take_n_episodes:]), 3)
+        self.moving_avg['ep_rewards'].append(mean_ep_reward)
+        self.moving_avg['ep_lengths'].append(mean_ep_length)
+        self.moving_avg['ep_avg_losses'].append(mean_ep_loss)
+        self.moving_avg['ep_avg_qs'].append(mean_ep_q)
 
         last_record_time = self.record_time
         self.record_time = time.time()
         time_since_last_record = np.round(self.record_time - last_record_time, 3)
 
-        print(
-            f"Episode {episode} - "
-            f"Step {step} - "
-            f"Epsilon {epsilon} - "
-            f"Mean Reward {mean_ep_reward} - "
-            f"Mean Length {mean_ep_length} - "
-            f"Mean Loss {mean_ep_loss} - "
-            f"Mean Q Value {mean_ep_q} - "
-            f"Time Delta {time_since_last_record} - "
-            f"Time {datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}"
-        )
+        print(f"Episode {episode} - "
+              f"Step {step} - "
+              f"Epsilon {epsilon} - "
+              f"Mean Reward {mean_ep_reward} - "
+              f"Mean Length {mean_ep_length} - "
+              f"Mean Loss {mean_ep_loss} - "
+              f"Mean Q Value {mean_ep_q} - "
+              f"Time Delta {time_since_last_record} - "
+              f"Time {datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}")
 
-        with open(self.save_log, "a") as f:
-            f.write(
-                f"{episode:8d}{step:8d}{epsilon:10.3f}"
-                f"{mean_ep_reward:15.3f}{mean_ep_length:15.3f}{mean_ep_loss:15.3f}{mean_ep_q:15.3f}"
-                f"{time_since_last_record:15.3f}"
-                f"{datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S'):>20}\n"
-            )
+    def save_metrics(self):
+        """
+        Saves moving average metrics as csv file
+        """
+        metrics_df = pd.DataFrame.from_dict(self.moving_avg,
+                                            orient='index',
+                                            columns=list(self.moving_avg.keys()))
+        metrics_df.to_csv(os.path.join(save_dir,'moving_average_metrics.csv'),sep='\t')
 
-        for metric in ["ep_rewards", "ep_lengths", "ep_avg_losses", "ep_avg_qs"]:
-            plt.plot(getattr(self, f"moving_avg_{metric}"))
-            plt.savefig(getattr(self, f"{metric}_plot"))
+    def plot_metric(self):
+        
+        self.plot_attr = {"ep_rewards":save_dir / "reward_plot.pdf", 
+                          "ep_lengths":save_dir / "length_plot.pdf",
+                          "ep_avg_losses":save_dir / "loss_plot.pdf",
+                          "ep_avg_qs":save_dir / "q_plot.pdf"}
+
+        for metric_name, metric_plot_path in self.plot_attr.items():
+            plt.plot(self.moving_avg[metric_name])
+            plt.savefig(metric_plot_path,format='pdf',dpi=300)
             plt.clf()
 
 
 
 #######################################
-## MAIN - START DQN AGENT
+## MAIN 
 #######################################
 
 if __name__ == "__main__":
 
-    # get arguments from shell script
-    if len(sys.argv) > 1:
-        method_ = sys.argv[1]
-        if method_ =='dqn':
-            select_data = sys.argv[2]
     
     # --------Specify paths--------------------------
     # Specify directories (cluster)
-    home_dir = f"/home/mpib/bonati"
-    project_dir = os.path.join(home_dir,'CHM','reward_networks')
-    data_dir = os.path.join(project_dir, 'data','rawdata') 
-    logs_dir = os.path.join(project_dir, 'logs')
-
-    if method_=='dqn':
-        save_dir = Path("checkpoints") / datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-        save_dir.mkdir(parents=True)
-        if not os.path.exists(os.path.join(logs_dir,method_)):
-            os.makedirs(os.path.join(logs_dir,method_))
-        logging_fn = os.path.join(logs_dir,method_,f'{method_}_{time.strftime("%Y_%m-%d_%H-%M-%S")}.log')
+    #home_dir = f"/home/mpib/bonati"
+    #project_dir = os.path.join(home_dir,'CHM','reward_networks')
+    #data_dir = os.path.join(project_dir, 'data','rawdata') 
+    #logs_dir = os.path.join(project_dir, 'logs')
     
-    # -------Set-up logging---------------------
-    # Get current data and time as a string:
-    timestr = time.strftime("%Y_%m-%d_%H-%M-%S")
-    # start logging:
-    logging.basicConfig(
-        filename=logging_fn, level=logging.DEBUG, format='%(asctime)s %(message)s',
-        datefmt='%d/%m/%Y %H:%M:%S')
+    # Specify directories (local)
+    project_folder = os.getcwd()
+    data_dir = os.path.join(project_folder,'data')
+    save_dir = os.path.join("../..",'data','solutions')
+    log_dir = os.path.join("../..",'data','log')
+    with open(os.path.join(data_dir,'train.json')) as json_file:
+        train = json.load(json_file)
 
-    # Add basic script information to the logger
-    logging.info("------Start Running dqn_agent.py------")
-    logging.info(f"Operating system: {sys.platform}\n")
+    test = train[10:13]
+
+    # ---------Parameters----------------------------------
+    N_EPISODES = 5
+    N_ROUNDS = 3
+    N_NETWORKS = len(test)
+    N_NODES = 10
+    OBS_SHAPE = 7 # OR 8?
+    BATCH_SIZE = 4
+    # specify if cuda is available
+    use_cuda = th.cuda.is_available()
+    print(f"Using CUDA: {use_cuda} \n")
+    if not use_cuda:
+        DEVICE = th.device('cpu')
+    else: 
+        DEVICE=th.device('cuda')
 
     # ---------Start analysis------------------------------
-    if method_=='dqn':
-        logging.info(f"Starting method DQN...\n")
-        
-        # specify if cuda is available
-        use_cuda = torch.cuda.is_available()
-        logging.info(f"Using CUDA: {use_cuda} \n")
-        
-        # initialize environment
-        env = Reward_Network(network)
-        
-        # initialize Agent + Logger
-        AI_agent = DQN_agent(state_dim=(4, 84, 84), action_dim=env.action_space.n, save_dir=save_dir)
-        logger = MetricLogger(save_dir)
+    # initialize environment(s)
+    env = Reward_Network(test)
+    
+    # initialize Agent 
+    AI_agent = Agent(obs_dim=2, action_dim=env.action_space_idx.shape, save_dir=log_dir)
 
-        EPISODES = 10
-        for e in range(EPISODES):
+    # initialize Memory buffer
+    Mem = Memory(device=DEVICE, size=5, n_rounds=N_ROUNDS)
 
-            state = env.reset()
+    # initialize Logger
+    logger = MetricLogger(log_dir)
+
+    
+    for e in range(N_EPISODES):
+        for round in range(N_ROUNDS):
+
+            # reset env(s)
+            env.reset()
+            # obtain first observation of the env(s)
+            obs = env.observe()
+
             # Solve the reward networks!
             while True:
-
-                # Run agent on the state
-                action = AI_agent.act(state)
-                # Agent performs action
-                next_state, reward, done, info = env.step(action)
-                # Remember
-                AI_agent.cache(state, next_state, action, reward, done)
-                # Learn
-                q, loss = AI_agent.learn()
+                #if e==0 and round==0:
+                #    for k,v in obs.items():
+                #        print(k, v)
+                # choose action to perform in environment(s)
+                action = AI_agent.act(obs)
+                # agent performs action
+                next_obs, reward = env.step(action)
+                # remember transitions in memory
+                Mem.store(**obs,round=round,reward=reward, action=action)
+                obs = next_obs
+                
+                # Learn TODO: place this after all rounds or inside rounds?
+                #q, loss = AI_agent.learn()
+                
                 # Logging
+                # mock of the loss and q values
+                loss = np.random.randint(-10,2,1)
+                q= np.random.randint(-10,2,1)
                 logger.log_step(reward, loss, q)
-                # Update state
-                state = next_state
-                # Check if end of game
-                if done or info["flag_get"]:
+                
+                if env.is_done:
                     break
 
-            logger.log_episode()
-            if e % 20 == 0:
-                logger.record(episode=e, epsilon=AI_agent.exploration_rate, step=AI_agent.curr_step)
+        Mem.finish_episode()
+        sample = Mem.sample(BATCH_SIZE,device=DEVICE)
+        if sample is not None:
+            for k,v in sample.items():
+                print(k, v.shape)
+        else:
+            print(f"Skip episode {e}")
+        
+        # Learn
+        #q, loss = AI_agent.learn(sample)
+
+
+        logger.log_episode()
+        if e % 2 == 0:
+            logger.record(episode=e, epsilon=AI_agent.exploration_rate, step=AI_agent.curr_step)
+
+    logger.save_metrics()
