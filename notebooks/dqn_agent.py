@@ -1,6 +1,6 @@
 # This file specifices the Deep Q Learning AI agent model to solve a Reward Network DAG
 # See also: https://pyth.org/tutorials/intermediate/reinforcement_q_learning.html
-# and: https://pyth.org/tutorials/intermediate/mario_rl_tutorial.html
+# and: https://pytorch.org/tutorials/intermediate/mario_rl_tutorial.html
 #
 #
 # Author @ Sara Bonati
@@ -38,7 +38,7 @@ import torch.nn.functional as F     #
 from environment_vect import Reward_Network
 
 #######################################
-## Initialize NN TODO: adapt to our task
+## Initialize NN
 #######################################
 
 class DQN(nn.Module):
@@ -49,15 +49,21 @@ class DQN(nn.Module):
         self.linear1 = nn.Linear(in_features=input_size, out_features=hidden_size)
         self.linear2 = nn.Linear(in_features=hidden_size, out_features=output_size)
 
-    def reset(self):
-        self.hidden = None
-
     def forward(self, obs):
-        # evaluate q values for valid actions
+        # evaluate q values
         x = F.relu(self.linear1(obs['obs']))
         q = F.relu(self.linear2(x))
         
-        # set q values of invalid actions to be very low TODO: check
+        # --- QUESTION ---
+        # In calculating the Q values we should make the calculations for all actions, 
+        # and then the invalid actions will be set to a very low Q value e.g. -1000
+        # Is the forward pass the correct point at which to set the invalid actions to very low Q values?
+        # E.g. code snippet below
+        #
+        # The selection of the valid actions' Q values should then be performed in the act method using obs['mask'] on the network output; 
+        # I would also guess that this is also necessary because we need to maintain the same dimension
+        # of output_size for the network (different networks at different step numbers may have different
+        # number of valid actions that can be performed), 
         q[~obs['mask']] = -1000
         return q
 
@@ -112,7 +118,8 @@ class Agent:
         Given a observation, choose an epsilon-greedy action (explore) or use DNN to
         select the action which, given $S=s$, is associated to highest $Q(s,a)$
         Inputs:
-        - obs (dict with values of th.tensor): Observation of the current state - current nodes - and boolean mask of next possible nodes, shape is (state_dim)
+        - obs (dict with values of th.tensor): Observation of the current state - current nodes - 
+                                               and boolean mask of next possible nodes, shape is (state_dim)
         Outputs:
         - action_idx (th.tensor): An integer representing which action the AI agent will perform
         """
@@ -133,9 +140,11 @@ class Agent:
         #     if self.use_cuda:
         #         obs = obs.cuda()
 
-        #     # return Q values for each action in the action space | S=s
-        #     # each POSSIBLE action in action space | S=s 
-        #     action_values = self.policy_net(obs)
+        #     # return Q values for each VALID action in the action space A | S=s
+        #     ---QUESTION---
+        #     see question in line 57, would this be the step at which we select the valid actions' Q values?
+        #     action_values = self.policy_net(obs)[obs['mask']]
+
         #     # select action with highest Q value
         #     action_idx = th.argmax(action_values, axis=1).item()
 
@@ -350,6 +359,13 @@ class Memory():
 
 #######################################
 ## Initialize Logger
+# ---- QUESTION -----
+# This logger is adapted from https://pytorch.org/tutorials/intermediate/mario_rl_tutorial.html
+# In the tutorial there's a distinction between logging each step within an episode, 
+# logging an episode and logging the average of episodes; I guess that in our case only the 
+# logging an episode and logging the average of episodes would be needed right? 
+# Because q values and loss values would be obtained from the Agent's Learn method, which requires a sample from memory buffer
+# (and this in turn requires completing an episode)
 #######################################
 
 class MetricLogger:
@@ -357,21 +373,17 @@ class MetricLogger:
                 
         # History metrics
         self.history_metrics = {'ep_rewards':[],
-                                'ep_lengths':[],
                                 'ep_avg_losses':[],
                                 'ep_avg_qs':[]}
         self.ep_rewards = []
-        self.ep_lengths = []
         self.ep_avg_losses = []
         self.ep_avg_qs = []
 
         # Moving averages, added for every call to record()
         self.moving_avg = {'ep_rewards':[],
-                           'ep_lengths':[],
                            'ep_avg_losses':[],
                            'ep_avg_qs':[]}
         self.moving_avg_ep_rewards = []
-        self.moving_avg_ep_lengths = []
         self.moving_avg_ep_avg_losses = []
         self.moving_avg_ep_avg_qs = []
 
@@ -389,7 +401,6 @@ class MetricLogger:
         To be called at every transition within an episode
         """
         self.curr_ep_reward += reward
-        self.curr_ep_length += 1
         if loss:
             self.curr_ep_loss += loss
             self.curr_ep_q += q
@@ -401,7 +412,6 @@ class MetricLogger:
         """
         
         self.history_metrics['ep_rewards'].append(self.curr_ep_reward)
-        self.history_metrics['ep_lengths'].append(self.curr_ep_length)
         if self.curr_ep_loss_length == 0:
             ep_avg_loss = 0
             ep_avg_q = 0
@@ -419,20 +429,20 @@ class MetricLogger:
         Initialize current metrics values
         """
         self.curr_ep_reward = 0.0
-        self.curr_ep_length = 0
         self.curr_ep_loss = 0.0
         self.curr_ep_q = 0.0
         self.curr_ep_loss_length = 0
 
     def record(self, episode, epsilon, step):
+        """
+        Return info on metric trends over average of multiple episodes
+        """
 
         print(self.history_metrics['ep_rewards'])
         mean_ep_reward = np.round(np.mean(self.history_metrics['ep_rewards'][-self.take_n_episodes:]), 3)
-        mean_ep_length = np.round(np.mean(self.history_metrics['ep_lengths'][-self.take_n_episodes:]), 3)
         mean_ep_loss = np.round(np.mean(self.history_metrics['ep_avg_losses'][-self.take_n_episodes:]), 3)
         mean_ep_q = np.round(np.mean(self.history_metrics['ep_avg_qs'][-self.take_n_episodes:]), 3)
         self.moving_avg['ep_rewards'].append(mean_ep_reward)
-        self.moving_avg['ep_lengths'].append(mean_ep_length)
         self.moving_avg['ep_avg_losses'].append(mean_ep_loss)
         self.moving_avg['ep_avg_qs'].append(mean_ep_q)
 
@@ -444,7 +454,6 @@ class MetricLogger:
               f"Step {step} - "
               f"Epsilon {epsilon} - "
               f"Mean Reward {mean_ep_reward} - "
-              f"Mean Length {mean_ep_length} - "
               f"Mean Loss {mean_ep_loss} - "
               f"Mean Q Value {mean_ep_q} - "
               f"Time Delta {time_since_last_record} - "
@@ -462,7 +471,6 @@ class MetricLogger:
     def plot_metric(self):
         
         self.plot_attr = {"ep_rewards":save_dir / "reward_plot.pdf", 
-                          "ep_lengths":save_dir / "length_plot.pdf",
                           "ep_avg_losses":save_dir / "loss_plot.pdf",
                           "ep_avg_qs":save_dir / "q_plot.pdf"}
 
@@ -492,9 +500,10 @@ if __name__ == "__main__":
     data_dir = os.path.join(project_folder,'data')
     save_dir = os.path.join("../..",'data','solutions')
     log_dir = os.path.join("../..",'data','log')
+
+    # Load networks to test
     with open(os.path.join(data_dir,'train.json')) as json_file:
         train = json.load(json_file)
-
     test = train[10:13]
 
     # ---------Parameters----------------------------------
@@ -527,6 +536,12 @@ if __name__ == "__main__":
 
     
     for e in range(N_EPISODES):
+        # ----QUESTION-----
+        # I understood the concept of episode in RL as 1 episode = a sequence of states, actions and rewards,
+        # which ends with terminal state. We also said last time that we want to sample from memory within each episode.
+        # Just to make sure I understood correctly, the role of rounds here then is to make sure that we have a varied 
+        # (varied as in, different actions taken so different reward outcomes) and large number of transitions to sample 
+        # from the memory buffer within each episode?
         for round in range(N_ROUNDS):
 
             # reset env(s)
@@ -536,9 +551,7 @@ if __name__ == "__main__":
 
             # Solve the reward networks!
             while True:
-                #if e==0 and round==0:
-                #    for k,v in obs.items():
-                #        print(k, v)
+
                 # choose action to perform in environment(s)
                 action = AI_agent.act(obs)
                 # agent performs action
@@ -547,14 +560,18 @@ if __name__ == "__main__":
                 Mem.store(**obs,round=round,reward=reward, action=action)
                 obs = next_obs
                 
-                # Learn TODO: place this after all rounds or inside rounds?
+                # ---QUESTION---- -> place this code snippet after all rounds or inside rounds?
+                # This question is also linked to line 587-588 
+                # In the tutorials I saw so far (e.g. https://pytorch.org/tutorials/intermediate/mario_rl_tutorial.html) 
+                # within each episode the agent stores in memory each environment transition, 
+                # and then learns from given a replay memory sample immediately after.
+                # Our training structure is different, with multiple rounds per each episode; would it be correct then to place the 
+                # Learn method of the agent not in the code snippet below, but rather outside in line 588?
+
                 #q, loss = AI_agent.learn()
                 
-                # Logging
-                # mock of the loss and q values
-                loss = np.random.randint(-10,2,1)
-                q= np.random.randint(-10,2,1)
-                logger.log_step(reward, loss, q)
+                # Logging (see also question in Logger, the code snippet might be changed to logger.log_rounds)
+                #logger.log_step(reward, loss, q)
                 
                 if env.is_done:
                     break
@@ -567,12 +584,11 @@ if __name__ == "__main__":
         else:
             print(f"Skip episode {e}")
         
-        # Learn
+        # ---QUESTION---- is this the correct placement? Se also question above
         #q, loss = AI_agent.learn(sample)
+        #logger.log_episode()
 
+        #if e % 2 == 0:
+        #    logger.record(episode=e, epsilon=AI_agent.exploration_rate, step=AI_agent.curr_step)
 
-        logger.log_episode()
-        if e % 2 == 0:
-            logger.record(episode=e, epsilon=AI_agent.exploration_rate, step=AI_agent.curr_step)
-
-    logger.save_metrics()
+    #logger.save_metrics()
