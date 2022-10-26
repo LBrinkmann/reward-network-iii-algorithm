@@ -28,14 +28,38 @@ def restructure_edges(network):
     This function restructures the edges from list of dicts
     to one dict, to improve construction of edges matrix and 
     env vectorization
+
+    Args:
+        network (list): list of dicts, where each dict is a Reward Network with nodes and edges' info
+
+    Returns:
+        new_edges (dict): dict with list for source id, target id and reward
+    """    
     """
 
+    """
+    
     new_edges= {'source_id':[],'target_id':[],'reward':[]}
     for e in network['edges']:
         new_edges['source_id'].append(e['source_id'])
         new_edges['target_id'].append(e['target_id'])
         new_edges['reward'].append(e['reward'])
     return new_edges 
+
+def extract_level(network):
+    """
+    This function extracts the level for each node in a network
+
+    Args:
+        network (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """    
+    level= {}
+    for e in network['nodes']:
+        level[e['node_num']]=e['level']+1
+    return level
 
 
 class Reward_Network(gym.Env):
@@ -53,8 +77,9 @@ class Reward_Network(gym.Env):
         self.INIT_REWARD = 0
         self.INIT_STEP = 0
         self.MAX_STEP = 8
-        self.N_REWARD_IDX = 6
+        self.N_REWARD_IDX = 6 #(5 valid rewards + one to indicate no reward possible)
         self.N_NODES = 10
+        self.N_LEVELS = 5 #(4 valid levels + one to indicate no level possible)
         self.N_NETWORKS = len(self.network)
 
         # define node numbers (from 0 to 9)
@@ -70,6 +95,12 @@ class Reward_Network(gym.Env):
         self.action_space_idx = torch.full((self.N_NETWORKS,self.N_NODES, self.N_NODES), 1).long()  
         new_edges = list(map(restructure_edges,network))
         self.network_idx = torch.arange(self.N_NETWORKS, dtype=torch.long)
+
+        # initialize level information for all networks (organized in a n_networks x n_nodes x n_nodes matrix)
+        # 4 possible levels (of current node in edge) + 0 value to indicate no edge possible
+        levels = list(map(extract_level,network))
+        self.level_space = torch.full((self.N_NETWORKS,self.N_NODES, self.N_NODES), 0).long() 
+        
         for n in range(self.N_NETWORKS):
             buffer_action_space = torch.full((self.N_NODES, self.N_NODES), 0).long()
             source = torch.tensor(new_edges[n]['source_id']).long()
@@ -78,6 +109,14 @@ class Reward_Network(gym.Env):
             reward.apply_(lambda val: self.possible_rewards.get(val, 0))
             buffer_action_space[source,target]=reward
             self.action_space_idx[n,:,:] = buffer_action_space
+            
+            buffer_level = torch.full((self.N_NODES, self.N_NODES), 0).long()
+            where_edges_present = self.action_space_idx[n,:,:]!=0
+            for node in range(self.N_NODES):
+                buffer_level[node,where_edges_present[node,:]] = levels[n][node]
+            self.level_space[n,:,:] = buffer_level
+        print(self.level_space)
+
 
         # define reward map
         self.reward_map = torch.zeros(max(self.possible_rewards.values()) + 1, dtype=torch.long)
@@ -99,7 +138,7 @@ class Reward_Network(gym.Env):
         print(f'- set of nodes of shape {self.nodes.shape}')
         print(f'- action space of shape {self.action_space_idx.shape}')
         print(f'- reward balance of shape {self.reward_balance.shape}')
-        print(f'- bog loss counter of shape {self.big_loss_counter.shape}')
+        print(f'- big loss counter of shape {self.big_loss_counter.shape}')
         print(f'- step counter of shape {self.step_counter.shape}')
         print(f'- current node of shape {self.current_node.shape}')
         print('\n')
@@ -130,7 +169,7 @@ class Reward_Network(gym.Env):
         if torch.all(self.step_counter == 8):
             self.is_done = True
 
-        #return action,rewards,self.is_done
+        #return next_obs,rewards,self.is_done
         return self.observe(),rewards
         
         
@@ -162,10 +201,12 @@ class Reward_Network(gym.Env):
     def observe(self):
         """
         this function returns observation from the environment
+        was max_step + 1 before, now only max step because we cre about step 0 1 2 3 4 5 6 7 (in total 8 steps)
         """
-        self.observation_matrix = torch.zeros((self.N_NETWORKS,self.N_NODES,(self.N_REWARD_IDX+self.MAX_STEP+1+1)),dtype=torch.long)
+        self.observation_matrix = torch.zeros((self.N_NETWORKS,self.N_NODES,(self.N_REWARD_IDX+self.MAX_STEP+1+self.N_LEVELS)),dtype=torch.long)
         self.next_rewards_idx = torch.squeeze(torch.unsqueeze(self.action_space_idx[self.network_idx,self.current_node,:],dim=-1))
-        
+        self.next_edges_levels_idx = torch.squeeze(torch.unsqueeze(self.level_space[self.network_idx,self.current_node,:],dim=-1))
+
         # one hot encoding of reward_idx
         #print(f'one hot encoding of reward idx shape \n')
         #print(F.one_hot(self.next_rewards_idx,num_classes=self.N_REWARD_IDX).shape)
@@ -176,8 +217,8 @@ class Reward_Network(gym.Env):
         
         # one hot encoding of step counter TODO: n_steps or (n_steps+1)
         #print(f'one hot encoding of step counter \n')
-        #print(F.one_hot(self.step_counter,num_classes=self.MAX_STEP+1))
-        self.observation_matrix[:,:,self.N_REWARD_IDX:(self.N_REWARD_IDX+self.MAX_STEP+1)] = torch.repeat_interleave(F.one_hot(self.step_counter,num_classes=self.MAX_STEP+1), self.N_NODES,dim=1)
+        #print(torch.repeat_interleave(F.one_hot(self.step_counter,num_classes=self.MAX_STEP), self.N_NODES,dim=1).size())
+        self.observation_matrix[:,:,self.N_REWARD_IDX:(self.N_REWARD_IDX+self.MAX_STEP)] = torch.repeat_interleave(F.one_hot(self.step_counter,num_classes=self.MAX_STEP), self.N_NODES,dim=1)
 
         # big loss counter
         #print(f'big loss counter \n')
@@ -186,33 +227,33 @@ class Reward_Network(gym.Env):
         #print(torch.repeat_interleave(self.big_loss_counter, self.N_NODES,dim=1))
         #print(f'big loss counter repeated to fit 10 nodes shape \n')
         #print(torch.repeat_interleave(self.big_loss_counter, self.N_NODES,dim=1).shape)
-        self.observation_matrix[:,:,-1] = torch.repeat_interleave(self.big_loss_counter, self.N_NODES,dim=1)
+
+        # :,:,-1
+        self.observation_matrix[:,:,(self.N_REWARD_IDX+self.MAX_STEP):(self.N_REWARD_IDX+self.MAX_STEP+1)] = torch.unsqueeze(torch.repeat_interleave(self.big_loss_counter, self.N_NODES,dim=1),dim=-1)
         #print(f'shape of main observation matrix: {self.observation_matrix.shape}')
+
+        # one hot encoding of current levle node for an edge
+        self.observation_matrix[:,:,-5:] = F.one_hot(self.next_edges_levels_idx,num_classes=self.N_LEVELS)
         
         # the second observation matrix (boolean mask indicating valid actions)
         self.next_nodes = torch.squeeze(torch.unsqueeze(self.edge_is_present[self.network_idx,self.current_node,:],dim=-1))
         
         return {'mask':self.next_nodes,
                 'obs':self.observation_matrix}
-        #return {'current_node':self.current_node,
-        #        'next_possible_nodes':self.next_nodes,
-        #        'next_possible_rewards_idx':self.next_rewards_idx,
-        #        'total_reward':self.reward_balance,
-        #        'big_loss_counter':self.big_loss_counter,
-        #        'n_steps':self.step_counter,
-        #        'done':self.is_done}
+
 
 
 # For quick testing purposes, comment out if not needed
 
-# with open(os.path.join(os.getcwd(),'data','train.json')) as json_file:
-#     test = json.load(json_file)
-# env_test = Reward_Network(test[10:13])
+#with open(os.path.join(os.getcwd(),'data','train.json')) as json_file:
+#      test = json.load(json_file)
+#env_test = Reward_Network(test[10:13])
 
 
-# env_test.reset()
-# print(env_test.observe())
+#env_test.reset()
+#obs = env_test.observe()
+
+#next_obs,rewards= env_test.step(torch.tensor([3,6,2]))
+# print(rewards,rewards.shape)
 # print('\n')
-# action,rewards,done = env_test.step(torch.tensor([3,6,2]))
-# print('\n')
-# print(env_test.observe())
+# #print(env_test.observe())
