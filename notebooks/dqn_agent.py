@@ -1,5 +1,5 @@
 # This file specifices the Deep Q Learning AI agent model to solve a Reward Network DAG
-# See also: https://pyth.org/tutorials/intermediate/reinforcement_q_learning.html
+# See also: https://pytorch.org/tutorials/intermediate/reinforcement_q_learning.html
 # and: https://pytorch.org/tutorials/intermediate/mario_rl_tutorial.html
 #
 #
@@ -16,23 +16,29 @@ from itertools import count
 from tqdm import tqdm
 import math
 import random
-import glob
-import logging
 import re
-import sys
-import os
 import json
 import time,datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Optional
-# TODO: specify custom types for state and action of env
+import argparse
 
-# import Pytorch modules
+# filesystem and log file specific imports
+import logging
+import glob
+import os
+import sys
+
+# import Pytorch + hyperparameter tuning modules
 import torch as th
 import torch.nn as nn               # layers
 import torch.optim as optim         # optimizers
 import torch.nn.functional as F     #
+from ray import air, tune
+from ray.tune.schedulers import ASHAScheduler
+from ray.air import session
+from ray.tune.search.optuna import OptunaSearch
 
 # import the custom reward network environment class
 from environment_vect import Reward_Network
@@ -46,12 +52,13 @@ class DQN(nn.Module):
     def __init__(self, input_size, output_size, hidden_size):
         super(DQN, self).__init__()
 
-        self.linear1 = nn.Linear(in_features=input_size, out_features=hidden_size)
-        self.linear2 = nn.Linear(in_features=hidden_size, out_features=output_size)
+        self.linear1 = nn.Linear(input_size[-1], hidden_size[-1])
+        self.linear2 = nn.Linear(hidden_size[-1], output_size[-1])
 
     def forward(self, obs):
         # evaluate q values
-        x = F.relu(self.linear1(obs['obs']))
+        i = obs['obs'][:,:,:].float()
+        x = F.relu(self.linear1(i))
         q = F.relu(self.linear2(x))
 
         # --- QUESTION ---
@@ -97,33 +104,43 @@ class DQN(nn.Module):
 #######################################
 
 class Agent:
-    def __init__(self, obs_dim: int, action_dim: tuple, save_dir: str):
+    def __init__(self, obs_dim: int, config_params:dict, action_dim: tuple, save_dir: str, device):
         """
         Initializes an object of class Agent 
 
         Args:
             obs_dim (int): number of elements present in the observation (2, action space observation + valid action mask)
+            config_params (dict): a dict of all parameters and constants of the reward network problem (e.g. number of nodes, number of networks..)
             action_dim (tuple): shape of action space of one environment
             save_dir (str): path to folder where to save model checkpoints into
+            device: torhc device (cpu or cuda)
         """        
 
         # assert tests
-        # TODO
+        assert len(config_params)==11, f'expected 11 key-value pairs in config_params, got {len(config_params)} instead'
+        assert os.path.exists(save_dir), f'{save_dir} is not a valid path (does not exist)'
 
         # specify environment parameters
         self.obs_dim = obs_dim
         self.action_dim = action_dim
+        self.network_params =  {'N_NETWORKS':config['n_networks'],
+                                'N_NODES':config['n_nodes'],
+                                'N_ROUNDS':config['n_rounds']}
 
         # specify DNNs used by the agent in training and learning Q(s,a) from experience
         # to predict the most optimal action - we implement this in the Learn section
         # two DNNs - policy net with Q_{online} and target net with Q_{target}- that
         # independently approximate the optimal action-value function.
-        self.policy_net = DQN(1,1,1)
-        self.target_net = DQN(1,1,1)
+        input_size = (self.network_params['N_NETWORKS'],self.network_params['N_NODES'],20)
+        hidden_size = (self.network_params['N_NETWORKS'],self.network_params['N_NODES'],3)
+        # one q value for each action
+        output_size = (self.network_params['N_NETWORKS'],self.network_params['N_NODES'],1)
+        self.policy_net = DQN(input_size, output_size, hidden_size)
+        self.target_net = DQN(input_size, output_size, hidden_size)
 
         # specify \epsilon greedy policy exploration parameters (relevant in exploration)
         self.exploration_rate = 1
-        self.exploration_rate_decay = 0.99999975
+        self.exploration_rate_decay = config['exploration_rate_decay']#0.99999975
         self.exploration_rate_min = 0.1
         self.curr_step = 0
 
@@ -133,16 +150,19 @@ class Agent:
         # specify training loop parameters
         self.burnin = 1e4  # min. experiences before training
         self.learn_every = 3  # no. of experiences between updates to Q_online
-        self.sync_every = 1e4  # no. of experiences between Q_target & Q_online sync
+        self.sync_every = config['nn_update_frequency']#1e4  # no. of experiences between Q_target & Q_online sync
         self.save_every = 1e4  # no. of experiences between Q_target & Q_online sync
 
         # specify which loss function and which optimizer to use (and their respective params)
-        self.lr = 0.00025
+        self.lr = config['lr']#0.00025
         self.optimizer = th.optim.Adam(self.policy_net.parameters(), lr=self.lr)
-        self.loss_fn = th.nn.SmoothL1Loss()
+        self.loss_fn = th.nn.SmoothL1Loss(reduction='none')
 
         # specify output directory
         self.save_dir = save_dir
+
+        # torch device
+        self.device = device
 
     def apply_mask(self,q_values,mask):
         """
@@ -166,7 +186,8 @@ class Agent:
         select the action which, given $S=s$, is associated to highest $Q(s,a)$
 
         Args:
-            obs (dict with values of th.tensor): observation from the env(s) comprising of reward index action space and a valid action mask
+            obs (dict with values of th.tensor): observation from the env(s) comprising of one hot encoded reward+step counter+ big loss counter 
+                                                 and a valid action mask
 
         Returns:
             action (th.tensor): node index representing next nodes to move to for all envs
@@ -178,28 +199,29 @@ class Agent:
             f"Wrong length of state representation: expected dict of size {self.obs_dim}, got: {len(obs)}"
 
         # for the moment keep a random action selection strategy to mock agent choosing action
-        action_idx = th.squeeze(th.multinomial(obs['mask'].type(th.float),1))
+        #action_idx = th.squeeze(th.multinomial(obs['mask'].type(th.float),1))
 
         # EXPLORE (select random action from the action space)
         #if np.random.rand() < self.exploration_rate:
-        action_idx = np.random.randint(self.action_dim)
-        random_actions = th.squeeze(th.multinomial(obs['mask'].type(th.float),1))
+        #random_actions = th.squeeze(th.multinomial(obs['mask'].type(th.float),1))
+        random_actions = th.multinomial(obs['mask'].type(th.float),1)
+        print(f'random actions {th.squeeze(random_actions,dim=-1)}')
 
-        # or EXPLOIT (select greedy action)
-        # else:
-        #     if self.use_cuda:
-        #         obs = obs.cuda()
-
+        # EXPLOIT (select greedy action)
         # return Q values for each action in the action space A | S=s
-        action_values = self.policy_net(obs)
+        action_q_values = self.policy_net(obs)
         # apply masking to obtain Q values for each VALID action (invalid actions set to very low Q value)
-        action_values = self.apply_mask(action_values,obs['mask'])
+        action_q_values = self.apply_mask(action_q_values,obs['mask'])
         # select action with highest Q value
-        greedy_actions = th.argmax(action_values, axis=1).item()
+        greedy_actions = th.argmax(action_q_values, axis=1)#.item()
+        print(f'greedy actions {th.squeeze(greedy_actions,dim=-1)}')
 
-        # select between random or greedy action
-        select_random = (th.rand(size=random_actions.shape, device=self.device) < self.exploration_rate).long()
+        # select between random or greedy action in each env
+        select_random = (th.rand(self.network_params['N_NETWORKS'], device=self.device) < self.exploration_rate).long()
+        print(f'action selection -> {select_random}')
         action = select_random * random_actions + (1 - select_random) * greedy_actions
+        print(f'action -> {action}')
+        print('\n')
 
         # decrease exploration_rate
         self.exploration_rate *= self.exploration_rate_decay
@@ -208,46 +230,63 @@ class Agent:
         # increment step
         self.curr_step += 1
 
-        return action,action_values
+        return action[:,0],action_q_values
 
 
     def td_estimate(self, state, action):
         """
-        This function returns the temporal difference estimate for a (state,action) pair.
-        In other words, it returns the predicted optimal $Q^*$ for a given state s - action a pair
+        This function returns the TD estimate for a (state,action) pair - the predicted optimal Q∗ for a given state s
+        
+        Args:
+            state (dict of th.tensor): observation
+            action (th.tensor): action a
+
+        Returns:
+            td_est: Q∗_online(s,a)
         """
         # we use the online model here we get Q_online(s,a)
-        current_Q = self.policy_net(state)#[np.arange(0, self.batch_size), action]
-        self.apply_mask(current_Q,state['mask'])
-        return current_Q
+        td_est = self.policy_net(state)#[np.arange(0, self.batch_size), action]
+        # apply masking (invalid actions set to very low Q value)
+        td_est = self.apply_mask(td_est,state['mask'])
+        return td_est
 
     # note that we don't want to update target net parameters by backprop (hence the th.no_grad),
     # instead the online net parameters will take the place of the target net parameters periodically
     @th.no_grad()
-    def td_target(self, reward, next_state):
+    def td_target(self, reward, state):
         """
-        This method returns the expected Q values
+        This method returns TD target - aggregation of current reward and the estimated Q∗ in the next state s'
 
         Args:
-            reward (_type_): _description_
-            next_state (_type_): _description_
+            reward (_type_): reward obtained at current observation
+            next_state (_type_): observation corresponding to applying next action a'
 
         Returns:
-            q_target: estimated q values from target net
+            td_tgt: estimated q values from target net
         """        
 
         # Because we don’t know what next action a' will be,
         # we use the action a' that maximizes Q_{online} in the next state s'
-        next_state_Q = self.policy_net(next_state)
-        self.apply_mask(next_state_Q,next_state['mask'])
-        best_action = th.argmax(next_state_Q, axis=1)
+        #next_state_Q_values = self.policy_net(state)
+        # apply masking (invalid actions set to very low Q value)
+        #next_state_Q_values = self.apply_mask(next_state_Q_values,state['mask'])
+        #best_action = th.argmax(next_state_Q_values, axis=1)
 
-        next_Q = th.zeros_like(reward, device=self.device)
+        next_max_Q2 = th.zeros(state['obs'].size[:3],device=self.device)
+        #next_max_Q = th.zeros_like(next_state_Q_values, device=self.device)
         # we skip the first observation and set the future value for the terminal
         # state to 0
-        next_Q[:, :-1] = self.target_net(next_state)[:, 1:].max(-1)[0].detach()
+        target_Q = self.target_net(state)
+        target_Q = self.apply_mask(target_Q,state['mask'])
+        # batch,steps,netowkrs,nodes
+        next_Q = target_Q[:,1:]
+        # batch,steps,networks
+        next_max_Q = next_Q.max(-1)[0].detach()
+        next_max_Q2[:,:-1,:] = next_max_Q
+        #TODO: check dimensions, remmebr batch dimension - check gradients
+        #next_Q[:, :-1] = self.target_net(state)[:, 1:].max(-1)[0].detach()
 
-        return reward + (self.gamma * next_Q)
+        return th.squeeze(reward) + (self.gamma * next_max_Q2)
 
 
     def update_Q_online(self, td_estimate, td_target):
@@ -265,15 +304,16 @@ class Agent:
             loss: loss value
         """        
 
-        # calculate loss, defined as TD_estimate - TD_target,
+        # calculate loss, defined as SmoothL1Loss on (TD_estimate,TD_target),
         # then do gradient descent step to try to minimize loss
         loss = self.loss_fn(td_estimate, td_target)
         self.optimizer.zero_grad()
         loss.backward()
 
-        # truncate large gradients as in original DQN paper TODO: finish
+        # truncate large gradients as in original DQN paper
         for param in self.policy_net.parameters():
             param.grad.data.clamp_(-1, 1)
+
         self.optimizer.step()
 
         return loss.item()
@@ -295,12 +335,14 @@ class Agent:
                      save_path)
         print(f"Reward_network_iii_dqn_model checkpoint saved to {save_path} at step {self.curr_step}")
 
-    def learn(self,sample):
+    def learn(self,memory_sample):
         """
-        Update online action value (Q) function with a batch of experiences
+        Update online action value (Q) function with a batch of experiences.
+        As we sample inputs from memory, we compute loss using TD estimate and TD target, then backpropagate this loss down 
+        Q_online to update its parameters θ_online
 
         Args:
-            sample (dict with values as th.tensors): sample from Memory buffer object
+            memory_sample (dict with values as th.tensors): sample from Memory buffer object
 
         Returns:
             (th.tensor,float): estimated Q values + loss value
@@ -311,8 +353,8 @@ class Agent:
             self.sync_Q_target()
 
         # if applicable save model checkpoints
-        if self.curr_step % self.save_every == 0:
-            self.save()
+        #if self.curr_step % self.save_every == 0:
+        #    self.save()
 
         if self.curr_step < self.burnin:
             return None, None
@@ -321,20 +363,28 @@ class Agent:
             return None, None
 
         # Break down Memory buffer sample TODO: finish
-        state = sample['obs']
-        next_state = sample['obs']
-        action = sample['action']
-        reward = sample['reward']
+        state = memory_sample['obs']
+        print(f'memory sample state shape {state.shape}')
+        action = memory_sample['action']
+        print(f'memory sample action shape {action.shape}')
+        reward = memory_sample['reward']
+        print(f'memory sample reward shape {reward.shape}')
 
         # Get TD Estimate
         td_est = self.td_estimate(state, action)
+        # apply mask 
+        td_est = self.apply_mask(td_est,state['mask'])
+        print(f'td_est {td_est.detach()}')
         # Get TD Target
-        td_tgt = self.td_target(reward, next_state)#, done)
+        td_tgt = self.td_target(reward, state)
+        # apply mask 
+        td_est = self.apply_mask(td_est,state['mask'])
+        print(f'td_tgt {td_tgt.detach()}')
 
         # Backpropagate loss through Q_online
         loss = self.update_Q_online(td_est, td_tgt)
 
-        return (td_est.mean().item(), loss)
+        return td_est.mean().item(), loss
 
 
 #######################################
@@ -506,11 +556,12 @@ class MetricLogger:
         self.n_steps = n_steps
 
         # Q values and reward stats
-        self.q_step_log = th.zeros(n_steps,n_networks,n_nodes,n_nodes)
+        self.q_step_log = th.zeros(n_steps,n_networks,n_nodes)
         self.reward_step_log = th.zeros(n_steps,n_networks)
 
         # Episode metrics
-        self.episode_metrics = {'rewards':[],
+        self.episode_metrics = {'reward_steps':[],
+                                'reward_episode':[],
                                 'loss':[],
                                 'q_mean_steps':[], 
                                 'q_min_steps':[],
@@ -528,22 +579,25 @@ class MetricLogger:
                                 'q_min':[],
                                 'q_max':[]}
 
-        # Moving averages, added for every call to record()
-        #self.multiple_episode_metrics= {'ep_rewards':[],
-        #                   'ep_avg_losses':[],
-        #                   'ep_avg_qs':[]}
-        #self.moving_avg_ep_rewards = []
-        #self.moving_avg_ep_avg_losses = []
-        #self.moving_avg_ep_avg_qs = []
-
         # number of episodes to consider to calculate mean episode {current_metric}
-        #self.take_n_episodes = 5
+        self.take_n_episodes = 5
 
         # Current episode metric
         self.init_episode()
 
         # Timing
         self.record_time = time.time()
+
+    def init_episode(self):
+        """
+        Reset current metrics values
+        """
+        self.curr_ep_reward = 0.0
+        self.curr_ep_loss = 0.0
+        self.curr_ep_q = 0.0
+        self.curr_ep_loss_length = 0
+        self.q_step_log = th.zeros(self.n_steps,self.n_networks,self.n_nodes)
+        self.reward_step_log = th.zeros(self.n_steps,self.n_networks)
 
     def log_step(self, reward, q_step, step_number):
         """
@@ -557,15 +611,11 @@ class MetricLogger:
         """        
 
         self.curr_ep_reward += reward
-        self.reward_step_log[step_number,:,:] = reward
-        self.q_step_log[step_number,:,:,:] = q_step
+        self.reward_step_log[step_number,:] = reward[:,0]
+        self.q_step_log[step_number,:,:] = q_step[:,:,0].detach()
 
-        #if loss:
-        #    self.curr_ep_loss += loss
-        #    self.curr_ep_q += q
-        #    self.curr_ep_loss_length += 1
 
-    def log_episode(self,q,loss):
+    def log_episode(self):
         """
         Store metrics'values at end of a single episode
 
@@ -576,60 +626,58 @@ class MetricLogger:
 
         # log the total reward obtained in the episode for each of the networks
         #self.episode_metrics['rewards'].append(self.curr_ep_reward)
-        self.episode_metrics['rewards'].append(th.sum(self.reward_step_log,dim=0))
-        # log the loss value in the episode for each of the networks
-        self.episode_metrics['loss'].append(loss)
-        if self.curr_ep_loss_length == 0:
-            ep_avg_loss = 0
-            ep_avg_q = 0
-        else:
-            ep_avg_loss = np.round(self.curr_ep_loss / self.curr_ep_loss_length, 5)
-            ep_avg_q = np.round(self.curr_ep_q / self.curr_ep_loss_length, 5)
+        self.episode_metrics['reward_steps'].append(self.reward_step_log)
+        self.episode_metrics['reward_episode'].append(th.squeeze(th.sum(self.reward_step_log,dim=0)))
+        
+        # log the loss value in the episode for each of the networks TODO: adapt to store when Learn method is called
+        #self.episode_metrics['loss'].append(loss)
 
         # log the mean, min and max q value in the episode over all envs but FOR EACH STEP SEPARATELY
         # (apply mask to self.q_step_log ? we are mainly interested in the mean min and max of valid actions)
         self.episode_metrics['q_mean_steps'].append(th.mean(self.q_step_log,dim=0))
-        self.episode_metrics['q_min_steps'].append(th.min(self.q_step_log,dim=0))
-        self.episode_metrics['q_max_steps'].append(th.max(self.q_step_log,dim=0))
+        #self.episode_metrics['q_min_steps'].append(th.amin(self.q_step_log,dim=(1,2)))
+        self.episode_metrics['q_max_steps'].append(th.amax(self.q_step_log,dim=(1,2)))
         # log the average of mean, min and max q value in the episode ACROSS ALL STEPS
         self.episode_metrics['q_mean'].append(th.mean(self.episode_metrics['q_mean_steps'][-1]))
-        self.episode_metrics['q_min'].append(th.mean(self.episode_metrics['q_min_steps'][-1]))
+        #self.episode_metrics['q_min'].append(th.mean(self.episode_metrics['q_min_steps'][-1]))
         self.episode_metrics['q_max'].append(th.mean(self.episode_metrics['q_max_steps'][-1]))
 
 
         # reset values to zero
         self.init_episode()
 
-    def init_episode(self):
+    def log_episode_learn(self,q,loss):
         """
-        Reset current metrics values
-        """
-        self.curr_ep_reward = 0.0
-        self.curr_ep_loss = 0.0
-        self.curr_ep_q = 0.0
-        self.curr_ep_loss_length = 0
-        self.q_step_log = th.zeros(self.n_steps,self.n_networks,self.n_nodes,self.n_nodes)
-        self.reward_step_log = th.zeros(self.n_steps,self.n_networks)
+        Store metrics'values at the call of Learn method TODO: finish
+
+        Args:
+            q (th.tensor): q values for each env  
+            loss (float): loss value
+        """        
+        # log the q values from learn method
+        self.episode_metrics['q_learn'].append(q)
+        # log the loss value from learn method
+        self.episode_metrics['loss'].append(loss)
+
 
     def record(self, episode, epsilon): #, step):
         """
         This method prints out during training the average trend of different metrics recorded for each episode.
         The avergae trend is calculated counting the last self.take_n_episodes completed
-
+        TODO: finish for loss and minimum q value
         Args:
             episode (int): the current episode number
             epsilon (float): the current exploration rate for the greedy policy
         """        
-
-        mean_ep_reward = np.round(np.mean(self.episode_metrics['rewards'][-self.take_n_episodes:]), 3)
-        mean_ep_loss = np.round(np.mean(self.episode_metrics['loss'][-self.take_n_episodes:]), 3)
-        mean_ep_q_mean = np.round(np.mean(self.episode_metrics['q_mean'][-self.take_n_episodes:]), 3)
-        mean_ep_q_min = np.round(np.mean(self.episode_metrics['q_min'][-self.take_n_episodes:]), 3)
-        mean_ep_q_max = np.round(np.mean(self.episode_metrics['q_max'][-self.take_n_episodes:]), 3)
-        self.record_metrics['rewards'].append(mean_ep_reward)
-        self.record_metrics['loss'].append(mean_ep_loss)
+        mean_ep_reward = np.round(th.mean(self.episode_metrics['reward_episode'][-self.take_n_episodes:][0]), 3)
+        #mean_ep_loss = np.round(th.mean(self.episode_metrics['loss'][-self.take_n_episodes:][0]), 3)
+        mean_ep_q_mean = np.round(th.mean(self.episode_metrics['q_mean'][-self.take_n_episodes:][0]), 3)
+        #mean_ep_q_min = np.round(np.mean(self.episode_metrics['q_min'][-self.take_n_episodes:][0]), 3)
+        mean_ep_q_max = np.round(th.mean(self.episode_metrics['q_max'][-self.take_n_episodes:][0]), 3)
+        self.record_metrics['reward_episode'].append(mean_ep_reward)
+        #self.record_metrics['loss'].append(mean_ep_loss)
         self.record_metrics['q_mean'].append(mean_ep_q_mean)
-        self.record_metrics['q_min'].append(mean_ep_q_min)
+        #self.record_metrics['q_min'].append(mean_ep_q_min)
         self.record_metrics['q_max'].append(mean_ep_q_max)
 
         last_record_time = self.record_time
@@ -639,9 +687,9 @@ class MetricLogger:
         print(f"We are at Episode {episode} - "
               f"Epsilon {epsilon} - "
               f"Mean Reward over last {self.take_n_episodes} episodes: {mean_ep_reward} - "
-              f"Mean Loss over last {self.take_n_episodes} episodes: {mean_ep_loss} - "
+              #f"Mean Loss over last {self.take_n_episodes} episodes: {mean_ep_loss} - "
               f"Mean Q Value over last {self.take_n_episodes} episodes: {mean_ep_q_mean} - "
-              f"Min Q Value over last {self.take_n_episodes} episodes: {mean_ep_q_min} - "
+              #f"Min Q Value over last {self.take_n_episodes} episodes: {mean_ep_q_min} - "
               f"Max Q Value over last {self.take_n_episodes} episodes: {mean_ep_q_max} - "
               f"Time Delta {time_since_last_record} - "
               f"Time {datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}")
@@ -660,7 +708,7 @@ class MetricLogger:
         self.plot_attr = {"ep_rewards":save_dir / "reward_plot.pdf",
                           "ep_loss":save_dir / "loss_plot.pdf",
                           "ep_mean_q":save_dir / "mean_q_plot.pdf",
-                          "ep_min_q":save_dir / "min_q_plot.pdf",
+                          #"ep_min_q":save_dir / "min_q_plot.pdf",
                           "ep_max_q":save_dir / "max_q_plot.pdf"}
 
         for metric_name, metric_plot_path in self.plot_attr.items():
@@ -671,38 +719,27 @@ class MetricLogger:
 
 
 #######################################
-## MAIN
+## TRAINING FUNCTION
 #######################################
+def train_agent(config):
+    """
+    Train AI agent to solve reward networks
 
-if __name__ == "__main__":
+    Args:
+        config (dict): dict containing parameter values, data paths and
+                       flag to run or not run hyperparameter tuning
+    """      
 
-
-    # --------Specify paths--------------------------
-    # Specify directories (cluster)
-    #home_dir = f"/home/mpib/bonati"
-    #project_dir = os.path.join(home_dir,'CHM','reward_networks')
-    #data_dir = os.path.join(project_dir, 'data','rawdata')
-    #logs_dir = os.path.join(project_dir, 'logs')
-
-    # Specify directories (local)
-    project_folder = os.getcwd()
-    data_dir = os.path.join(project_folder,'data')
-    save_dir = os.path.join("../..",'data','solutions')
-    log_dir = os.path.join("../..",'data','log')
-
-    # Load networks to test
-    with open(os.path.join(data_dir,'train.json')) as json_file:
+    # ---------Loading of the networks---------------------
+        # Load networks to test
+    with open(config['data_path']) as json_file:
         train = json.load(json_file)
     test = train[10:13]
+    # add number of netowkrs to config
+    config['n_networks'] = len(test)
+   
 
-    # ---------Parameters----------------------------------
-    N_EPISODES = 50
-    N_ROUNDS = 8 # or number of steps
-    N_NETWORKS = len(test)
-    N_NODES = 10
-    OBS_SHAPE = 7 # OR 8?
-    BATCH_SIZE = 4
-    # specify if cuda is available
+    # ---------Specify device (cpu or cuda)----------------
     use_cuda = th.cuda.is_available()
     print(f"Using CUDA: {use_cuda} \n")
     if not use_cuda:
@@ -715,71 +752,50 @@ if __name__ == "__main__":
     env = Reward_Network(test)
 
     # initialize Agent
-    AI_agent = Agent(obs_dim=2, action_dim=env.action_space_idx.shape, save_dir=log_dir)
+    AI_agent = Agent(obs_dim=2,
+                     config_params = config,
+                     action_dim=env.action_space_idx.shape, 
+                     save_dir=log_dir,
+                     device=DEVICE)
 
     # initialize Memory buffer
-    Mem = Memory(device=DEVICE, size=5, n_rounds=N_ROUNDS)
+    Mem = Memory(device=DEVICE, size=5, n_rounds=config['n_rounds'])
 
     # initialize Logger
-    logger = MetricLogger(log_dir,N_NETWORKS,N_EPISODES,N_NODES)
+    logger = MetricLogger(log_dir,config['n_networks'],config['n_episodes'],config['n_nodes'])
 
 
-    for e in range(N_EPISODES):
-        # ----QUESTION-----
-        # I understood the concept of episode in RL as 1 episode = a sequence of states, actions and rewards,
-        # which ends with terminal state. We also said last time that we want to sample from memory within each episode.
-        # Just to make sure I understood correctly, the role of rounds here then is to make sure that we have a varied
-        # (varied as in, different actions taken so different reward outcomes) and large number of transitions to sample
-        # from the memory buffer within each episode?
-
-        # ---- Answer---
-        # Sorry, there has been a confusion with the terminology. We only need
-        # episode (aka update steps) and moves (aka rounds or steps). So there are only
-        # two loops needed.
-
-        #for round in range(N_ROUNDS):
-
-        #    # reset env(s)
-        #    env.reset()
-        #    # obtain first observation of the env(s)
-        #    obs = env.observe()
+    for e in range(config['n_episodes']):
+        print(f'----EPISODE {e+1}---- \n')
 
         # reset env(s)
         env.reset()
         # obtain first observation of the env(s)
         obs = env.observe()
 
-        for round in range(N_ROUNDS):
+        for round in range(config['n_rounds']):
 
             # Solve the reward networks!
             #while True:
+            print('\n')
+            print(f'ROUND/STEP {round} \n')
 
             # choose action to perform in environment(s)
             action,step_q_values = AI_agent.act(obs)
+            print(f'q values for step {round} -> \n {step_q_values[:,:,0].detach()}')
             # agent performs action
-            next_obs, reward = env.step(action)
+            # if we are in the last step we only need reward, else output also the next state
+            if round!=7:
+                next_obs, reward = env.step(action,round)
+            else:
+                reward = env.step(action,round)
+            print(f'reward -> {reward}')
             # remember transitions in memory
             Mem.store(**obs,round=round,reward=reward, action=action)
-            obs = next_obs
+            if round!=7:
+                obs = next_obs
 
-                # ---QUESTION---- -> place this code snippet after all rounds or inside rounds?
-                # This question is also linked to line 587-588
-                # In the tutorials I saw so far (e.g. https://pytorch.org/tutorials/intermediate/mario_rl_tutorial.html)
-                # within each episode the agent stores in memory each environment transition,
-                # and then learns from given a replay memory sample immediately after.
-                # Our training structure is different, with multiple rounds per each episode; would it be correct then to place the
-                # Learn method of the agent not in the code snippet below, but
-                # rather outside in line 588?
-                # ---Answer----
-                # I would do the learning step only once for each episode.
-                # You might want to log reward at each step (aggregated over all
-                # networks).
-                # You might want to log q and loss at the end of the episode
-                # after the update step.
-
-                #q, loss = AI_agent.learn()
-
-            # Logging 
+            # Logging (step)
             logger.log_step(reward,step_q_values,round)
 
             if env.is_done:
@@ -787,22 +803,216 @@ if __name__ == "__main__":
         
         #--END OF EPISODE--
         Mem.finish_episode()
-        sample = Mem.sample(BATCH_SIZE,device=DEVICE)
+
+        logger.log_episode()
+        
+        print('\n')
+        print('\n')
+        print('MEMORY SAMPLE?')
+        sample = Mem.sample(config['batch_size'],device=DEVICE)
+
         if sample is not None:
             for k,v in sample.items():
                 print(k, v.shape)
+
+            # Learning step
+            q, loss = AI_agent.learn(sample)
+
+            if config['tune']:
+                # Send the current training result back to Tune
+                tune.report(mean_accuracy=loss)
+            # Logging (mimick values as if obtained form leanr method to test the logger)
+            #q,loss = random.randint(0,5),random.randint(0,1)
+            #logger.log_episode_learn(q,loss)
+        
         else:
             print(f"Skip episode {e}")
 
-        # Learning step
-        q, loss = AI_agent.learn(sample)
-        # Logging
-        logger.log_episode(q,loss)
-
-        if e % 2 == 0:
-            logger.record(episode=e, 
-                          epsilon=AI_agent.exploration_rate,
-                          step=AI_agent.curr_step)
+        #if e % 5 == 0:
+        #    logger.record(episode=e, epsilon=AI_agent.exploration_rate)
 
     # final logging
-    logger.save_metrics()
+    #logger.save_metrics()
+
+#######################################
+## MAIN
+#######################################
+
+if __name__ == "__main__":
+
+    # get start time of the script:
+    start = time.time()
+
+    # --------Specify arguments--------------------------
+    parser = argparse.ArgumentParser(description="DQN Argument Parser (Project: Reward Networks III)",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("-t", "--tune", action="store_true", help="run hyperparameter tuning")
+    parser.add_argument("data_src", help="Data source location (path to JSON networks file)")
+    parser.add_argument("results_dest", help="Results location (checkpoints + figures + logs)")
+    args = vars(parser.parse_args())
+
+    # --------Specify paths--------------------------
+    current_dir = os.getcwd()
+    root_dir = os.sep.join(current_dir.split(os.sep)[:2])
+    # Specify directories depending on system (local vs cluster)
+    if root_dir == '/mnt':
+        user_name = os.sep.join(current_dir.split(os.sep)[4:5])
+        home_dir = f"/mnt/beegfs/home/{user_name}"
+        project_dir = os.path.join(home_dir,'CHM','reward_networks_III')
+        data_dir = os.path.join(project_dir, 'data')
+        out_dir = os.path.join(data_dir, 'results')
+
+    elif root_dir == '/Users':
+        # Specify directories (local)
+        project_folder = os.getcwd()
+        data_dir = os.path.join(project_folder,'data')
+        save_dir = os.path.join("../..",'data','solutions')
+        log_dir = os.path.join("../..",'data','log')
+
+    # Load networks to test
+    with open(os.path.join(data_dir,'train.json')) as json_file:
+        train = json.load(json_file)
+    test = train[10:13]
+
+    # ---------Parameters----------------------------------
+    config = {'data_path':os.path.join(args.data_src,'train.json'),
+              'n_episodes':50,
+              'n_rounds':8,
+              'n_nodes':10,
+              'batch_size':4,
+              'memory_size':5,
+              'lr':0.0001,
+              'nn_hidden_size':5,
+              'exploration_rate_decay':0.9,
+              'nn_update_frequency':1e4,
+              'tune':args.t
+              }
+
+    # if we want to run hyperparameter tuning then define search space and 
+    # Ray Tune object TODO: check if Ray can be used on SLURM cluster
+    if (args.t):
+        
+        # Define a search space and initialize the search algorithm.
+        search_space = {"lr": tune.grid_search([1e-5, 1e-4]),
+                        "batch_size":tune.qrandint(5,20),
+                        "memory_size":tune.qrandint(100,200),
+                        "nn_hidden_size":tune.qrandint(5,20)}
+        algo = OptunaSearch()
+
+        # Start a Tune run that maximizes mean accuracy and stops after 5 iterations.
+        tuner = tune.Tuner(train_agent,
+                           tune_config=tune.TuneConfig(metric="loss",
+                                                       mode="min",
+                                                       search_alg=algo),
+                           run_config=air.RunConfig(stop={"training_iteration": 5}),
+                           param_space=search_space)
+
+        results = tuner.fit()
+        print("Best config is:", results.get_best_result().config)
+    
+    else:
+
+        # train the agent
+        train_agent(config)
+
+    # N_EPISODES = 50
+    # N_ROUNDS = 8 # or number of steps
+    # N_NETWORKS = len(test)
+    # N_NODES = 10
+    # #OBS_SHAPE = 7 # OR 8?
+    # BATCH_SIZE = 4
+    # network_params = {'N_NETWORKS':N_NETWORKS,
+    #                  'N_NODES':N_NODES,
+    #                  'N_ROUNDS':N_ROUNDS}
+
+    # # specify if cuda is available
+    # use_cuda = th.cuda.is_available()
+    # print(f"Using CUDA: {use_cuda} \n")
+    # if not use_cuda:
+    #     DEVICE = th.device('cpu')
+    # else:
+    #     DEVICE=th.device('cuda')
+
+    # # ---------Start analysis------------------------------
+    # # initialize environment(s)
+    # env = Reward_Network(test)
+
+    # # initialize Agent
+    # AI_agent = Agent(obs_dim=2,
+    #                  network_params = network_params,
+    #                  action_dim=env.action_space_idx.shape, 
+    #                  save_dir=log_dir,
+    #                  device=DEVICE)
+
+    # # initialize Memory buffer
+    # Mem = Memory(device=DEVICE, size=5, n_rounds=N_ROUNDS)
+
+    # # initialize Logger
+    # logger = MetricLogger(log_dir,N_NETWORKS,N_EPISODES,N_NODES)
+
+
+    # for e in range(N_EPISODES):
+    #     print(f'----EPISODE {e+1}---- \n')
+
+    #     # reset env(s)
+    #     env.reset()
+    #     # obtain first observation of the env(s)
+    #     obs = env.observe()
+
+    #     for round in range(N_ROUNDS):
+
+    #         # Solve the reward networks!
+    #         #while True:
+    #         print('\n')
+    #         print(f'ROUND/STEP {round} \n')
+
+    #         # choose action to perform in environment(s)
+    #         action,step_q_values = AI_agent.act(obs)
+    #         print(f'q values for step {round} -> \n {step_q_values[:,:,0].detach()}')
+    #         # agent performs action
+    #         # if we are in the last step we only need reward, else output also the next state
+    #         if round!=7:
+    #             next_obs, reward = env.step(action,round)
+    #         else:
+    #             reward = env.step(action,round)
+    #         print(f'reward -> {reward}')
+    #         # remember transitions in memory
+    #         Mem.store(**obs,round=round,reward=reward, action=action)
+    #         if round!=7:
+    #             obs = next_obs
+
+    #         # Logging (step)
+    #         logger.log_step(reward,step_q_values,round)
+
+    #         if env.is_done:
+    #             break
+        
+    #     #--END OF EPISODE--
+    #     Mem.finish_episode()
+
+    #     logger.log_episode()
+        
+    #     print('\n')
+    #     print('\n')
+    #     print('MEMORY SAMPLE?')
+    #     sample = Mem.sample(BATCH_SIZE,device=DEVICE)
+
+    #     if sample is not None:
+    #         for k,v in sample.items():
+    #             print(k, v.shape)
+
+    #         # Learning step
+    #         q, loss = AI_agent.learn(sample)
+    #         # Logging (mimick values as if obtainedform leanr method to test the logger)
+    #         #q,loss = random.randint(0,5),random.randint(0,1)
+    #         #logger.log_episode_learn(q,loss)
+        
+    #     else:
+    #         print(f"Skip episode {e}")
+
+    #     #if e % 5 == 0:
+    #     #    logger.record(episode=e, epsilon=AI_agent.exploration_rate)
+
+    # # final logging
+    # #logger.save_metrics()
+    
