@@ -35,10 +35,7 @@ def restructure_edges(network):
     Returns:
         new_edges (dict): dict with list for source id, target id and reward
     """    
-    """
 
-    """
-    
     new_edges= {'source_id':[],'target_id':[],'reward':[]}
     for e in network['edges']:
         new_edges['source_id'].append(e['source_id'])
@@ -64,7 +61,14 @@ def extract_level(network):
 
 class Reward_Network(gym.Env):
     
-    def __init__(self, network, to_log=False):
+    def __init__(self, network):
+        """
+        Initializes a reward network object given ntowkr(s) info in JSON format
+
+        Args:
+            network (list of dict): list of network information, where each network in list is a dict
+                                    with keys nodes-edges-starting_node-total_reward
+        """        
         
         #-------------
         # assert tests TODO
@@ -115,7 +119,6 @@ class Reward_Network(gym.Env):
             for node in range(self.N_NODES):
                 buffer_level[node,where_edges_present[node,:]] = levels[n][node]
             self.level_space[n,:,:] = buffer_level
-        print(self.level_space)
 
 
         # define reward map
@@ -127,6 +130,10 @@ class Reward_Network(gym.Env):
         
 
     def reset(self):
+        """
+        Resets variables that keep track of env interaction metrics e.g. reward,step counter, loss counter,..
+        at the end of each episode
+        """        
         # Reset the state of the environment to an initial state
         self.reward_balance = torch.full((self.N_NETWORKS,1),self.INIT_REWARD)
         self.step_counter = torch.full((self.N_NETWORKS,1),self.INIT_STEP)
@@ -144,38 +151,56 @@ class Reward_Network(gym.Env):
         print('\n')
 
     
-    def step(self, action):
-        '''
-        Take a step in all environments; here action corresponds to the target nodes for each env
+    def step(self, action,round):
+        """
+        Take a step in all environments given an action for each env;
+        here action is given in the form of node index for each env
         action_i \in [0,1,2,3,4,5,6,7,8,9]
-        '''
+
+        Args:
+            action (th.tensor): tensor of size n_networks x 1 
+            round (int): current round number at which the step is applied. 
+                            Relevant to decide if the next observation of envs after action 
+                            also needs to be returned or not
+
+        Returns:
+            rewards (th.tensor): tensor of size n_networks x 1 with the correspinding reward obtained
+                                 in each env for a specific action a
+            
+            (for DQN, if not at last round) 
+            next_obs (dict of th.tensor): observation of env(s) following action a
+        """
 
         self.source_node = self.current_node
-        #print(f'Source nodes are: {self.current_node}, we are going to new nodes {action}')
         
+        # add to big loss counter if 1 present in rewards_idx
         rewards_idx = torch.unsqueeze(self.action_space_idx[self.network_idx,self.current_node,action], dim=-1)
         # add to big loss counter if 1 present in rewards_idx
         self.big_loss_counter= torch.add(self.big_loss_counter,(rewards_idx==1).int())
-
+        # obtain numerical reward value correspongint o reward indices
         rewards = self.reward_map[rewards_idx]
+        # add rewards to reward balance
         self.reward_balance = torch.add(self.reward_balance,rewards)
-        #print(f'We get rewards : {rewards[:,0]} and the new reward balance is: {self.reward_balance[:,0]}')
-        self.current_node = action
-        #print(f'Now we are in nodes: {self.current_node}')
-        self.step_counter = torch.add(self.step_counter,1)
-        #print(f'Step counter for all networks is: {self.step_counter[:,0]}')
-        #print('\n')
 
+        # update the current node for all envs
+        self.current_node = action
+        # update step counter
+        self.step_counter = torch.add(self.step_counter,1)
         if torch.all(self.step_counter == 8):
             self.is_done = True
 
-        #return next_obs,rewards,self.is_done
-        return self.observe(),rewards
+        # (relevant for DQN) if we are in the last step return only rewards,
+        # else return also observation after action has been taken
+        if round!=7:
+            next_obs = self.observe()
+            return next_obs,rewards
+        else:
+            return rewards
         
         
     def get_state(self):
         """
-        this function returns the current state of the environment.
+        Returns the current state of the environment.
         State information given by this funciton is less detailed compared
         to the observation. 
         """
@@ -185,23 +210,20 @@ class Reward_Network(gym.Env):
                 'done':self.is_done}
 
 
-    def get_possible_rewards(self,obs):
-        """
-        this function returns the next possible rewards given an observation;
-        the rewards are selected using boolean masking, and the resulting array is split
-        into sub-tensors whose size is given by how many valid edges are present in each network
-        in the current observation.
-        """
-        self.n_rewards_per_network = torch.count_nonzero(obs['next_possible_nodes'],dim=1).tolist()
-        self.next_rewards_all = torch.masked_select(obs['next_possible_rewards_idx'][self.network_idx],obs['next_possible_nodes'][self.network_idx])
-        self.next_rewards_per_network = torch.split(self.next_rewards_all,self.n_rewards_per_network)
-        
-        return self.next_rewards_per_network
-
     def observe(self):
         """
-        this function returns observation from the environment
+        Returns observation from the environment. The observation is made of a boolean mask indicating which 
+        actions are valid in each env + a main observation matrix.
+        For each node in each environment the main observation matrix contains contatenated one hot encoded info on:
+        - reward index 
+        - step counter
+        - loss counter (has an edge with associated reward of -100 been taken yet)
+        - level (what is the level of the current/starting node of an edge)
+
         was max_step + 1 before, now only max step because we cre about step 0 1 2 3 4 5 6 7 (in total 8 steps)
+
+        Returns:
+            obs (dict of th.tensor): main observation matrix (key=obs) + boolean mask (key=mask)
         """
         self.observation_matrix = torch.zeros((self.N_NETWORKS,self.N_NODES,(self.N_REWARD_IDX+self.MAX_STEP+1+self.N_LEVELS)),dtype=torch.long)
         self.next_rewards_idx = torch.squeeze(torch.unsqueeze(self.action_space_idx[self.network_idx,self.current_node,:],dim=-1))
@@ -217,7 +239,8 @@ class Reward_Network(gym.Env):
         
         # one hot encoding of step counter TODO: n_steps or (n_steps+1)
         #print(f'one hot encoding of step counter \n')
-        #print(torch.repeat_interleave(F.one_hot(self.step_counter,num_classes=self.MAX_STEP), self.N_NODES,dim=1).size())
+        print(self.step_counter)
+        print(F.one_hot(self.step_counter,num_classes=self.MAX_STEP))
         self.observation_matrix[:,:,self.N_REWARD_IDX:(self.N_REWARD_IDX+self.MAX_STEP)] = torch.repeat_interleave(F.one_hot(self.step_counter,num_classes=self.MAX_STEP), self.N_NODES,dim=1)
 
         # big loss counter
