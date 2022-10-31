@@ -15,7 +15,7 @@ import json
 import random
 import time
 sns.set_theme()
-from stable_baselines3.common.env_checker import check_env
+
 
 
 class Reward_Network(gym.Env):
@@ -67,9 +67,9 @@ class Reward_Network(gym.Env):
     def step(self, action):
         # Execute one time step within the environment
         #self._take_action(action)
-        self.source_node = action['source_id']
+        self.source_node = action['source_num'] # OR with _id alternatively
         self.reward_balance += action['reward']
-        self.current_node = action['target_id']
+        self.current_node = action['target_num']
         self.step_counter += 1
 
         if self.step_counter == 8:
@@ -104,9 +104,9 @@ class Reward_Network(gym.Env):
         this function returns observation from the environment
         """
         return {'current_node':self.current_node,
-                'actions_available':[n for n in self.action_space if n['source_id'] == self.current_node],
-                'next_possible_nodes':np.asarray([n['target_id'] for n in self.action_space if n['source_id'] == self.current_node]),
-                'next_possible_rewards':np.asarray([n['reward'] for n in self.action_space if n['source_id'] == self.current_node]),
+                'actions_available':[n for n in self.action_space if n['source_num'] == self.current_node],
+                'next_possible_nodes':np.asarray([n['target_num'] for n in self.action_space if n['source_num'] == self.current_node]),
+                'next_possible_rewards':np.asarray([n['reward'] for n in self.action_space if n['source_num'] == self.current_node]),
                 'total_reward':self.reward_balance,
                 'n_steps':self.step_counter,
                 'done':self.is_done}
@@ -118,10 +118,10 @@ class Reward_Network(gym.Env):
 
 # For quick testing purposes, comment out if not needed
 
-with open(os.path.join('/Users/bonati/Desktop/CHM/reward_networks/data/rawdata','test.json')) as json_file:
-    test = json.load(json_file)
-env_test = Reward_Network(test[0])
-check_env(env_test)
+#with open(os.path.join('../data','test.json')) as json_file:
+#    test = json.load(json_file)
+#env_test = Reward_Network(test[0])
+#check_env(env_test)
 #env_test.reset()
 #print(env_test.get_state())
 #print(env_test.observe())
