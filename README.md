@@ -2,6 +2,8 @@
 
 ## Install required packages
 
+Here Python 3.10.8 was used
+
 ```bash
 python3 -m venv .venv
 # Mac/Linux
@@ -13,22 +15,19 @@ pip install wheel
 pip install -r requirements.txt
 ```
 
-## Run
-
-```
-TODO
-```
-
 ## Repo organization
-* **notebooks**: includes `.ipynb`,`.py`,`.sh` files to generate reward networks and solve them
+
+* **notebooks**: includes `.ipynb`,`.py` files to generate reward networks and solve them
+* **cluster**: includes bash script(s) to submit jobs to the MPI SLURM cluster (Tardis)
 * **models**: includes `.py` files used for parsing and validation of JSON data
 * **params**: includes `.yml` files for each file in notebooks specifying parameters
 * **rn**: includes utilities used in the scripts in `notebooks` folder
 * **data**: includes json files where all generated reward networks used in the experiment are stored. The `_viz` suffix in the file names indicate those data files that have additional node location information (for frontend vizualization purposes)
 
-
 ## Workflow
+
 ### Network generation
+
 ```mermaid
 
 flowchart TD
@@ -44,6 +43,7 @@ end
 ```
 
 ### Rule-based strategy comparisons
+
 ```mermaid
 
 flowchart TD
@@ -56,7 +56,8 @@ C(data/train.json) --> D(notebooks/try_vectorization.ipynb)
 end
 ```
 
-### DQN 
+### DQN
+
 ```mermaid
 
 flowchart TD
@@ -65,8 +66,7 @@ subgraph DQN
 A(params/dqn_agent.yml) --> B(notebooks/dqn_agent.py)
 D(notebooks/environment_vect.py) --> B(notebooks/dqn_agent.py)
 C(data/train.json) --> B(notebooks/dqn_agent.py) 
+
+B(notebooks/dqn_agent.py) --> F(cluster/dqn_submit_job.sh)
 end
 ```
-
-
-
