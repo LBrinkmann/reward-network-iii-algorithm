@@ -36,10 +36,10 @@ def restructure_edges(network):
         new_edges (dict): dict with list for source id, target id and reward
     """    
 
-    new_edges= {'source_id':[],'target_id':[],'reward':[]}
+    new_edges= {'source_num':[],'target_num':[],'reward':[]}
     for e in network['edges']:
-        new_edges['source_id'].append(e['source_id'])
-        new_edges['target_id'].append(e['target_id'])
+        new_edges['source_num'].append(e['source_num'])
+        new_edges['target_num'].append(e['target_num'])
         new_edges['reward'].append(e['reward'])
     return new_edges 
 
@@ -107,8 +107,8 @@ class Reward_Network(gym.Env):
         
         for n in range(self.N_NETWORKS):
             buffer_action_space = torch.full((self.N_NODES, self.N_NODES), 0).long()
-            source = torch.tensor(new_edges[n]['source_id']).long()
-            target = torch.tensor(new_edges[n]['target_id']).long()
+            source = torch.tensor(new_edges[n]['source_num']).long()
+            target = torch.tensor(new_edges[n]['target_num']).long()
             reward = torch.tensor(new_edges[n]['reward']).long()
             reward.apply_(lambda val: self.possible_rewards.get(val, 0))
             buffer_action_space[source,target]=reward
@@ -239,8 +239,8 @@ class Reward_Network(gym.Env):
         
         # one hot encoding of step counter TODO: n_steps or (n_steps+1)
         #print(f'one hot encoding of step counter \n')
-        print(self.step_counter)
-        print(F.one_hot(self.step_counter,num_classes=self.MAX_STEP))
+        #print(self.step_counter)
+        #print(F.one_hot(self.step_counter,num_classes=self.MAX_STEP))
         self.observation_matrix[:,:,self.N_REWARD_IDX:(self.N_REWARD_IDX+self.MAX_STEP)] = torch.repeat_interleave(F.one_hot(self.step_counter,num_classes=self.MAX_STEP), self.N_NODES,dim=1)
 
         # big loss counter
