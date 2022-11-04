@@ -1,0 +1,22 @@
+program: notebooks/dqn_agent.py
+method: grid
+metric:
+  goal: minimize
+  name: loss
+parameters:
+  learning_rate:
+    value: 1.e-4
+  batch_size:
+    value: 16
+  nn_hidden_layer_size:
+    values:
+      - 15
+      - 10
+      - 5
+  memory_size:
+    value: 50 
+  eploration_rate_decay:
+    value: 0.8
+  nn_update_frequency:
+    value: 100 
+
