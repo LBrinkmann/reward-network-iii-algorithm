@@ -36,8 +36,10 @@ import torch as th
 import torch.nn as nn               # layers
 import torch.optim as optim         # optimizers
 import torch.nn.functional as F     #
-from ray import air, tune
-from ray.tune.schedulers import ASHAScheduler
+import wandb
+import click
+import yaml
+from ray import tune, air
 from ray.air import session
 from ray.tune.search.optuna import OptunaSearch
 
@@ -234,27 +236,28 @@ class Agent:
             td_tgt: estimated q values from target net
         """        
 
-        # Because we don’t know what next action a' will be,
-        # we use the action a' that maximizes Q_{online} in the next state s'
-        #next_state_Q_values = self.policy_net(state)
-        # apply masking (invalid actions set to very low Q value)
-        #next_state_Q_values = self.apply_mask(next_state_Q_values,state['mask'])
-        #best_action = th.argmax(next_state_Q_values, axis=1)
+        # state has dimensions batch_size,n_steps,n_networks,n_nodes, length of one hot encoded observation info - in our case 20
+        print(f'state shape -> {state.shape}')
+        # reward has dimensions batch_size,n_steps,n_networks,1
+        print(f'reward shape -> {reward.shape}')
         
-        # or size
         next_max_Q2 = th.zeros(state.shape[:3],device=self.device)
-        #next_max_Q = th.zeros_like(next_state_Q_values, device=self.device)
-        # we skip the first observation and set the future value for the terminal
-        # state to 0
+        print(f'next_max_Q2 shape -> {next_max_Q2.shape}')
+        
+        # target q has dimensions batch_size,n_steps,n_networks,n_nodes,1
         target_Q = self.target_net(state)
         target_Q = self.apply_mask(target_Q,state_mask)
-        # batch,steps,netowkrs,nodes
+        print(f'target_Q shape -> {target_Q.shape}')
+        # next_Q has dimensions batch_size,(n_steps -1),n_networks,n_nodes,1
+        # (we skip the first observation and set the future value for the terminal state to 0)
         next_Q = target_Q[:,1:]
-        # batch,steps,networks
-        next_max_Q = next_Q.max(-1)[0].detach()
+        print(f'next_Q shape -> {next_Q.shape}')
+        
+        # next_max_Q has dimension batch,steps,networks
+        next_max_Q = th.squeeze(next_Q).max(-1)[0].detach()
+        print(f'next_max_Q shape -> {next_max_Q.shape}')
+
         next_max_Q2[:,:-1,:] = next_max_Q
-        #TODO: check dimensions, remmebr batch dimension - check gradients
-        #next_Q[:, :-1] = self.target_net(state)[:, 1:].max(-1)[0].detach()
 
         return th.squeeze(reward) + (self.gamma * next_max_Q2)
 
@@ -262,7 +265,7 @@ class Agent:
     def update_Q_online(self, td_estimate, td_target):
         """
         This function updates the parameters of the "online" DQN by means of backpropagation.
-        The loss value is given by the (td_estimate - td_target)
+        The loss value is given by F.smooth_l1_loss(td_estimate - td_target)
 
         \theta_{online} <- \theta_{online} + \alpha((TD_estimate - TD_target))
 
@@ -277,7 +280,6 @@ class Agent:
         # calculate loss, defined as SmoothL1Loss on (TD_estimate,TD_target),
         # then do gradient descent step to try to minimize loss
         loss = self.loss_fn(td_estimate, td_target)
-        print(loss.item())
         self.optimizer.zero_grad()
         loss.backward()
 
@@ -343,13 +345,15 @@ class Agent:
         reward = memory_sample['reward']
         print(f'memory sample reward shape {reward.shape}')
 
+        print('\n')
         # Get TD Estimate (mask alreadzy applied in function)
         td_est = self.td_estimate(state, state_mask)
         print(f'Calculated td_est of shape {td_est.shape}')
         # Get TD Target
         td_tgt = self.td_target(reward, state, state_mask)
-        print(f'td_tgt {td_tgt}')
+        print(f'td_tgt shape {td_tgt.shape}')
 
+        print('\n')
         # Backpropagate loss through Q_online
         loss = self.update_Q_online(td_est, td_tgt)
 
@@ -714,6 +718,11 @@ def train_agent(config):
         config (dict): dict containing parameter values, data paths and
                        flag to run or not run hyperparameter tuning
     """      
+    
+    # Initialize a new wandb run
+    #with wandb.init(config=config):
+    #    config = wandb.config
+
 
     # ---------Loading of the networks---------------------
         # Load networks to test
@@ -722,7 +731,7 @@ def train_agent(config):
     test = train[:10]
     # add number of netowkrs to config
     config['n_networks'] = len(test)
-   
+
 
     # ---------Specify device (cpu or cuda)----------------
     use_cuda = th.cuda.is_available()
@@ -738,10 +747,10 @@ def train_agent(config):
 
     # initialize Agent
     AI_agent = Agent(obs_dim=2,
-                     config_params = config,
-                     action_dim=env.action_space_idx.shape, 
-                     save_dir=config['log_path'],
-                     device=DEVICE)
+                    config_params = config,
+                    action_dim=env.action_space_idx.shape, 
+                    save_dir=config['log_path'],
+                    device=DEVICE)
 
     # initialize Memory buffer
     Mem = Memory(device=DEVICE, size=config['memory_size'], n_rounds=config['n_rounds'])
@@ -797,28 +806,25 @@ def train_agent(config):
         if sample is not None:
             for k,v in sample.items():
                 print(k, v.shape)
-
+            print('\n')
+            print('\n')
             # Learning step
             q, loss = AI_agent.learn(sample)
             print(loss)
 
             if config['tune']:
-                # Send the current training result back to Tune
-                tune.report(loss=loss)
-            # Logging (mimick values as if obtained form leanr method to test the logger)
-            #q,loss = random.randint(0,5),random.randint(0,1)
-            #logger.log_episode_learn(q,loss)
+                # Send the current training result back to Wandb
+                # TODO: add more info to send back to wandb logger
+                wandb.log({"loss": loss})
+                #tune.report(loss=loss)
         
         else:
             print(f"Skip episode {e+1}")
         print('\n')
-        #if e % 5 == 0:
-        #    logger.record(episode=e, epsilon=AI_agent.exploration_rate)
 
     # final logging
-    #print(logger.episode_metrics['reward_episode_all_envs'])
-    logger.plot_metric()
-    #logger.save_metrics()
+    #logger.plot_metric()
+
 
 #######################################
 ## MAIN
@@ -857,7 +863,7 @@ if __name__ == "__main__":
 
 
     # ---------Parameters----------------------------------
-    config = {'data_path':os.path.join(args.data_src,'train_viz.json'),
+    config = {'data_path':os.path.join(args.data_src,'train_viz_test.json'),
               'log_path':os.path.join(os.path.split(project_folder)[0],'data/log'),
               'n_episodes':500,
               'n_rounds':8,
@@ -872,7 +878,7 @@ if __name__ == "__main__":
               }
 
     # if we want to run hyperparameter tuning then define search space and 
-    # Ray Tune object TODO: check if Ray can be used on SLURM cluster
+    # Ray Tune object TODO: remove and use wandb instead
     if (args.tune==True):
         
         # set tune option to true
@@ -903,104 +909,5 @@ if __name__ == "__main__":
         # train the agent
         train_agent(config)
 
-    # N_EPISODES = 50
-    # N_ROUNDS = 8 # or number of steps
-    # N_NETWORKS = len(test)
-    # N_NODES = 10
-    # #OBS_SHAPE = 7 # OR 8?
-    # BATCH_SIZE = 4
-    # network_params = {'N_NETWORKS':N_NETWORKS,
-    #                  'N_NODES':N_NODES,
-    #                  'N_ROUNDS':N_ROUNDS}
 
-    # # specify if cuda is available
-    # use_cuda = th.cuda.is_available()
-    # print(f"Using CUDA: {use_cuda} \n")
-    # if not use_cuda:
-    #     DEVICE = th.device('cpu')
-    # else:
-    #     DEVICE=th.device('cuda')
-
-    # # ---------Start analysis------------------------------
-    # # initialize environment(s)
-    # env = Reward_Network(test)
-
-    # # initialize Agent
-    # AI_agent = Agent(obs_dim=2,
-    #                  network_params = network_params,
-    #                  action_dim=env.action_space_idx.shape, 
-    #                  save_dir=log_dir,
-    #                  device=DEVICE)
-
-    # # initialize Memory buffer
-    # Mem = Memory(device=DEVICE, size=5, n_rounds=N_ROUNDS)
-
-    # # initialize Logger
-    # logger = MetricLogger(log_dir,N_NETWORKS,N_EPISODES,N_NODES)
-
-
-    # for e in range(N_EPISODES):
-    #     print(f'----EPISODE {e+1}---- \n')
-
-    #     # reset env(s)
-    #     env.reset()
-    #     # obtain first observation of the env(s)
-    #     obs = env.observe()
-
-    #     for round in range(N_ROUNDS):
-
-    #         # Solve the reward networks!
-    #         #while True:
-    #         print('\n')
-    #         print(f'ROUND/STEP {round} \n')
-
-    #         # choose action to perform in environment(s)
-    #         action,step_q_values = AI_agent.act(obs)
-    #         print(f'q values for step {round} -> \n {step_q_values[:,:,0].detach()}')
-    #         # agent performs action
-    #         # if we are in the last step we only need reward, else output also the next state
-    #         if round!=7:
-    #             next_obs, reward = env.step(action,round)
-    #         else:
-    #             reward = env.step(action,round)
-    #         print(f'reward -> {reward}')
-    #         # remember transitions in memory
-    #         Mem.store(**obs,round=round,reward=reward, action=action)
-    #         if round!=7:
-    #             obs = next_obs
-
-    #         # Logging (step)
-    #         logger.log_step(reward,step_q_values,round)
-
-    #         if env.is_done:
-    #             break
-        
-    #     #--END OF EPISODE--
-    #     Mem.finish_episode()
-
-    #     logger.log_episode()
-        
-    #     print('\n')
-    #     print('\n')
-    #     print('MEMORY SAMPLE?')
-    #     sample = Mem.sample(BATCH_SIZE,device=DEVICE)
-
-    #     if sample is not None:
-    #         for k,v in sample.items():
-    #             print(k, v.shape)
-
-    #         # Learning step
-    #         q, loss = AI_agent.learn(sample)
-    #         # Logging (mimick values as if obtainedform leanr method to test the logger)
-    #         #q,loss = random.randint(0,5),random.randint(0,1)
-    #         #logger.log_episode_learn(q,loss)
-        
-    #     else:
-    #         print(f"Skip episode {e}")
-
-    #     #if e % 5 == 0:
-    #     #    logger.record(episode=e, epsilon=AI_agent.exploration_rate)
-
-    # # final logging
-    # #logger.save_metrics()
     
