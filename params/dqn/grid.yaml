@@ -5,18 +5,15 @@ metric:
   name: loss
 parameters:
   learning_rate:
-    value: 1.e-4
+    values: [1.e-3,1.e-4,3.e-4]
   batch_size:
-    value: 16
+    values: [8,16,32]
   nn_hidden_layer_size:
-    values:
-      - 15
-      - 10
-      - 5
+    values: [5,10,15]
   memory_size:
-    value: 50 
+    values: [50,100,200] 
   eploration_rate_decay:
-    value: 0.8
+    value: [0.7,0.8,0.9]
   nn_update_frequency:
-    value: 100 
+    value: [100,200,300,400,500] 
 
