@@ -73,7 +73,7 @@ class DQN(nn.Module):
 #######################################
 
 class Agent:
-    def __init__(self, obs_dim: int, config_params:dict, action_dim: tuple, save_dir: str, device):
+    def __init__(self, obs_dim: int, config:dict, action_dim: tuple, save_dir: str, device):
         """
         Initializes an object of class Agent 
 
@@ -86,22 +86,22 @@ class Agent:
         """        
 
         # assert tests
-        assert len(config_params)==13, f'expected 13 key-value pairs in config_params, got {len(config_params)} instead'
+        #assert len(config_params)==13, f'expected 13 key-value pairs in config_params, got {len(config_params)} instead'
         assert os.path.exists(save_dir), f'{save_dir} is not a valid path (does not exist)'
 
         # specify environment parameters
         self.obs_dim = obs_dim
         self.action_dim = action_dim
-        self.network_params =  {'N_NETWORKS':config['n_networks'],
-                                'N_NODES':config['n_nodes'],
-                                'N_ROUNDS':config['n_rounds']}
+        self.network_params =  {'N_NETWORKS':config.n_networks,
+                                'N_NODES':config.n_nodes,
+                                'N_ROUNDS':config.n_rounds}
 
         # specify DNNs used by the agent in training and learning Q(s,a) from experience
         # to predict the most optimal action - we implement this in the Learn section
         # two DNNs - policy net with Q_{online} and target net with Q_{target}- that
         # independently approximate the optimal action-value function.
         input_size = (self.network_params['N_NETWORKS'],self.network_params['N_NODES'],20)
-        hidden_size = (self.network_params['N_NETWORKS'],self.network_params['N_NODES'],config['nn_hidden_size'])
+        hidden_size = (self.network_params['N_NETWORKS'],self.network_params['N_NODES'],config.nn_hidden_size)
         # one q value for each action
         output_size = (self.network_params['N_NETWORKS'],self.network_params['N_NODES'],1)
         self.policy_net = DQN(input_size, output_size, hidden_size)
@@ -109,7 +109,7 @@ class Agent:
 
         # specify \epsilon greedy policy exploration parameters (relevant in exploration)
         self.exploration_rate = 1
-        self.exploration_rate_decay = config['exploration_rate_decay']#0.99999975
+        self.exploration_rate_decay = config.exploration_rate_decay#0.99999975
         self.exploration_rate_min = 0.1
         self.curr_step = 0
 
@@ -118,12 +118,12 @@ class Agent:
 
         # specify training loop parameters
         self.burnin = 10  # min. experiences before training
-        self.learn_every = 3  # no. of experiences between updates to Q_online
-        self.sync_every = config['nn_update_frequency']#1e4  # no. of experiences between Q_target & Q_online sync
+        self.learn_every = 5  # no. of experiences between updates to Q_online
+        self.sync_every = config.nn_update_frequency #1e4  # no. of experiences between Q_target & Q_online sync
         self.save_every = 1e4  # no. of experiences between Q_target & Q_online sync
 
         # specify which loss function and which optimizer to use (and their respective params)
-        self.lr = config['lr']#0.00025
+        self.lr = config.lr
         self.optimizer = th.optim.Adam(self.policy_net.parameters(), lr=self.lr)
         self.loss_fn = th.nn.SmoothL1Loss(reduction='none')
 
@@ -280,8 +280,12 @@ class Agent:
         # calculate loss, defined as SmoothL1Loss on (TD_estimate,TD_target),
         # then do gradient descent step to try to minimize loss
         loss = self.loss_fn(td_estimate, td_target)
+        print(f'loss shape -> {loss.shape}')
+        print(f'loss -> {loss}')
         self.optimizer.zero_grad()
-        loss.backward()
+
+        # we apply mean to get from dimension (batch_size,1) to 1 (scalar)
+        loss.mean().backward()
 
         # truncate large gradients as in original DQN paper
         for param in self.policy_net.parameters():
@@ -289,7 +293,7 @@ class Agent:
 
         self.optimizer.step()
 
-        return loss.item()
+        return loss.mean().item()
 
     def sync_Q_target(self):
         """
@@ -349,13 +353,17 @@ class Agent:
         # Get TD Estimate (mask alreadzy applied in function)
         td_est = self.td_estimate(state, state_mask)
         print(f'Calculated td_est of shape {td_est.shape}')
+        # like this?
+        td_est_try = th.squeeze(td_est).gather(-1,th.unsqueeze(action,-1)).squeeze(-1)
+        print(f'Calculated td_est try of shape {td_est_try.shape}')
         # Get TD Target
         td_tgt = self.td_target(reward, state, state_mask)
         print(f'td_tgt shape {td_tgt.shape}')
 
         print('\n')
         # Backpropagate loss through Q_online
-        loss = self.update_Q_online(td_est, td_tgt)
+        loss = self.update_Q_online(td_est_try, td_tgt)
+        #loss = self.update_Q_online(td_est, td_tgt)
 
         return td_est.mean().item(), loss
 
@@ -710,7 +718,7 @@ class MetricLogger:
 #######################################
 ## TRAINING FUNCTION
 #######################################
-def train_agent(config):
+def train_agent(config=None):
     """
     Train AI agent to solve reward networks
 
@@ -720,110 +728,107 @@ def train_agent(config):
     """      
     
     # Initialize a new wandb run
-    #with wandb.init(config=config):
-    #    config = wandb.config
+    with wandb.init(config=config):
+        config = wandb.config
 
 
-    # ---------Loading of the networks---------------------
-        # Load networks to test
-    with open(config['data_path']) as json_file:
-        train = json.load(json_file)
-    test = train[:10]
-    # add number of netowkrs to config
-    config['n_networks'] = len(test)
+        # ---------Loading of the networks---------------------
+            # Load networks to test
+        with open(os.path.join(data_dir,config.data_name)) as json_file:
+            train = json.load(json_file)
+        test = train[:]
+        # add number of netowkrs to config
+        #config['n_networks'] = len(test)
 
 
-    # ---------Specify device (cpu or cuda)----------------
-    use_cuda = th.cuda.is_available()
-    print(f"Using CUDA: {use_cuda} \n")
-    if not use_cuda:
-        DEVICE = th.device('cpu')
-    else:
-        DEVICE=th.device('cuda')
-
-    # ---------Start analysis------------------------------
-    # initialize environment(s)
-    env = Reward_Network(test)
-
-    # initialize Agent
-    AI_agent = Agent(obs_dim=2,
-                    config_params = config,
-                    action_dim=env.action_space_idx.shape, 
-                    save_dir=config['log_path'],
-                    device=DEVICE)
-
-    # initialize Memory buffer
-    Mem = Memory(device=DEVICE, size=config['memory_size'], n_rounds=config['n_rounds'])
-
-    # initialize Logger
-    logger = MetricLogger(config['log_path'],config['n_networks'],config['n_episodes'],config['n_nodes'])
-
-
-    for e in range(config['n_episodes']):
-        print(f'----EPISODE {e+1}---- \n')
-
-        # reset env(s)
-        env.reset()
-        # obtain first observation of the env(s)
-        obs = env.observe()
-
-        for round in range(config['n_rounds']):
-
-            # Solve the reward networks!
-            #while True:
-            print('\n')
-            print(f'ROUND/STEP {round} \n')
-
-            # choose action to perform in environment(s)
-            action,step_q_values = AI_agent.act(obs)
-            #print(f'q values for step {round} -> \n {step_q_values[:,:,0].detach()}')
-            # agent performs action
-            # if we are in the last step we only need reward, else output also the next state
-            if round!=7:
-                next_obs, reward = env.step(action,round)
-            else:
-                reward = env.step(action,round)
-            #print(f'reward -> {reward}')
-            # remember transitions in memory
-            Mem.store(**obs,round=round,reward=reward, action=action)
-            if round!=7:
-                obs = next_obs
-            # Logging (step)
-            logger.log_step(reward,step_q_values,round)
-
-            if env.is_done:
-                break
-        
-        #--END OF EPISODE--
-        Mem.finish_episode()
-
-        logger.log_episode()
-        
-        print('\n')
-        print('\n')
-        print(f'EPISODE {e+1} MEMORY SAMPLE!')
-        sample = Mem.sample(config['batch_size'],device=DEVICE)
-        if sample is not None:
-            for k,v in sample.items():
-                print(k, v.shape)
-            print('\n')
-            print('\n')
-            # Learning step
-            q, loss = AI_agent.learn(sample)
-            print(loss)
-
-            if config['tune']:
-                # Send the current training result back to Wandb
-                # TODO: add more info to send back to wandb logger
-                wandb.log({"loss": loss})
-                #tune.report(loss=loss)
-        
+        # ---------Specify device (cpu or cuda)----------------
+        use_cuda = th.cuda.is_available()
+        print(f"Using CUDA: {use_cuda} \n")
+        if not use_cuda:
+            DEVICE = th.device('cpu')
         else:
-            print(f"Skip episode {e+1}")
-        print('\n')
+            DEVICE=th.device('cuda')
 
-    # final logging
-    #logger.plot_metric()
+        # ---------Start analysis------------------------------
+        # initialize environment(s)
+        env = Reward_Network(test)
+
+        # initialize Agent
+        AI_agent = Agent(obs_dim=2,
+                        config_params = config,
+                        action_dim=env.action_space_idx.shape, 
+                        save_dir=out_dir,
+                        device=DEVICE)
+
+        # initialize Memory buffer
+        Mem = Memory(device=DEVICE, size=config.memory_size, n_rounds=config.n_rounds)
+
+        # initialize Logger
+        logger = MetricLogger(out_dir,config.n_networks,config.n_episodes,config.n_nodes)
+
+
+        for e in range(config.n_episodes):
+            print(f'----EPISODE {e+1}---- \n')
+
+            # reset env(s)
+            env.reset()
+            # obtain first observation of the env(s)
+            obs = env.observe()
+
+            for round in range(config.n_rounds):
+
+                # Solve the reward networks!
+                #while True:
+                print('\n')
+                print(f'ROUND/STEP {round} \n')
+
+                # choose action to perform in environment(s)
+                action,step_q_values = AI_agent.act(obs)
+                #print(f'q values for step {round} -> \n {step_q_values[:,:,0].detach()}')
+                # agent performs action
+                # if we are in the last step we only need reward, else output also the next state
+                if round!=7:
+                    next_obs, reward = env.step(action,round)
+                else:
+                    reward = env.step(action,round)
+                #print(f'reward -> {reward}')
+                # remember transitions in memory
+                Mem.store(**obs,round=round,reward=reward, action=action)
+                if round!=7:
+                    obs = next_obs
+                # Logging (step)
+                logger.log_step(reward,step_q_values,round)
+
+                if env.is_done:
+                    break
+            
+            #--END OF EPISODE--
+            Mem.finish_episode()
+
+            logger.log_episode()
+            
+            print('\n')
+            print('\n')
+            print(f'EPISODE {e+1} MEMORY SAMPLE!')
+            sample = Mem.sample(config.batch_size,device=DEVICE)
+            if sample is not None:
+                #for k,v in sample.items():
+                #    print(k, v.shape)
+                print('\n')
+                print('\n')
+                # Learning step
+                q, loss = AI_agent.learn(sample)
+
+
+                # Send the current training result back to Wandb
+                wandb.log({"batch_loss": loss,
+                           "episode": e+1})
+            else:
+                print(f"Skip episode {e+1}")
+            print('\n')
+
+        # final logging
+        #logger.plot_metric()
 
 
 #######################################
@@ -832,27 +837,18 @@ def train_agent(config):
 
 if __name__ == "__main__":
 
-    # get start time of the script:
-    start = time.time()
-
-    # --------Specify arguments--------------------------
-    parser = argparse.ArgumentParser(description="DQN Argument Parser (Project: Reward Networks III)",
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("-t", "--tune", action="store_true", help="run hyperparameter tuning")
-    parser.add_argument("data_src", type=str, help="Data source location (path to JSON networks file)")
-    parser.add_argument("results_dest", type=str, help="Results location (checkpoints + figures + logs)")
-    args = parser.parse_args()
-
     # --------Specify paths--------------------------
     current_dir = os.getcwd()
     root_dir = os.sep.join(current_dir.split(os.sep)[:2])
+    
     # Specify directories depending on system (local vs cluster)
     if root_dir == '/mnt':
         user_name = os.sep.join(current_dir.split(os.sep)[4:5])
         home_dir = f"/mnt/beegfs/home/{user_name}"
         project_dir = os.path.join(home_dir,'CHM','reward_networks_III')
-        data_dir = os.path.join(project_dir, 'data')
-        out_dir = os.path.join(data_dir, 'results')
+        code_dir = os.path.join(project_dir,'reward-network-iii-algorithm')
+        data_dir = os.path.join(code_dir, 'data')
+        out_dir = os.path.join(project_dir, 'results')
 
     elif root_dir == '/Users':
         # Specify directories (local)
@@ -861,53 +857,67 @@ if __name__ == "__main__":
         save_dir = os.path.join("../..",'data','solutions')
         log_dir = os.path.join("../..",'data','log')
 
+    # get start time of the script:
+    start = time.time()
+
+    # train agent!
+    train_agent()
+
+    # --------Specify arguments--------------------------
+    #parser = argparse.ArgumentParser(description="DQN Argument Parser (Project: Reward Networks III)",
+    #                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    #parser.add_argument("-t", "--tune", action="store_true", help="run hyperparameter tuning")
+    #parser.add_argument("data_src", type=str, help="Data source location (path to JSON networks file)")
+    #parser.add_argument("results_dest", type=str, help="Results location (checkpoints + figures + logs)")
+    #args = parser.parse_args()
+
 
     # ---------Parameters----------------------------------
-    config = {'data_path':os.path.join(args.data_src,'train_viz_test.json'),
-              'log_path':os.path.join(os.path.split(project_folder)[0],'data/log'),
-              'n_episodes':500,
-              'n_rounds':8,
-              'n_nodes':10,
-              'batch_size':10,
-              'memory_size':50,
-              'lr':0.0001,
-              'nn_hidden_size':10,
-              'exploration_rate_decay':0.8,
-              'nn_update_frequency':500,
-              'tune':False
-              }
+    #config = {'data_path':os.path.join(args.data_src,'train_viz_test.json'),
+    #          'log_path':os.path.join(os.path.split(project_folder)[0],'data/log'),
+    #          'n_episodes':500,
+    #          'n_rounds':8,
+    #          'n_nodes':10,
+    #          'batch_size':10,
+    #          'memory_size':50,
+    #          'lr':0.0001,
+    #          'nn_hidden_size':10,
+    #          'exploration_rate_decay':0.8,
+    #          'nn_update_frequency':500,
+    #          'tune':False
+    #          }
 
     # if we want to run hyperparameter tuning then define search space and 
     # Ray Tune object TODO: remove and use wandb instead
-    if (args.tune==True):
+    #if (args.tune==True):
         
         # set tune option to true
-        config['tune']=True
+    #    config['tune']=True
 
         # Define a search space and initialize the search algorithm.
-        search_space = {"lr": tune.grid_search([1e-5, 1e-4]),
-                        "batch_size":tune.qrandint(5,20),
-                        "memory_size":tune.qrandint(50,500),
-                        "nn_hidden_size":tune.qrandint(5,20),
-                        'exploration_rate_decay':tune.grid_search([0.6, 0.95]),
-                        'nn_update_frequency':tune.qrandint(50,500)}
-        algo = OptunaSearch()
+    #    search_space = {"lr": tune.grid_search([1e-5, 1e-4]),
+    #                    "batch_size":tune.qrandint(5,20),
+    #                    "memory_size":tune.qrandint(50,500),
+    #                    "nn_hidden_size":tune.qrandint(5,20),
+    #                    'exploration_rate_decay':tune.grid_search([0.6, 0.95]),
+    #                    'nn_update_frequency':tune.qrandint(50,500)}
+    #    algo = OptunaSearch()
 
-        # Start a Tune run that maximizes mean accuracy and stops after 5 iterations.
-        tuner = tune.Tuner(train_agent,
-                           tune_config=tune.TuneConfig(metric="loss",
-                                                       mode="min",
-                                                       search_alg=algo),
-                           run_config=air.RunConfig(stop={"training_iteration": 5}),
-                           param_space=search_space)
+    #    # Start a Tune run that maximizes mean accuracy and stops after 5 iterations.
+    #    tuner = tune.Tuner(train_agent,
+    #                       tune_config=tune.TuneConfig(metric="loss",
+    #                                                   mode="min",
+    #                                                   search_alg=algo),
+    #                       run_config=air.RunConfig(stop={"training_iteration": 5}),
+    #                       param_space=search_space)
 
-        results = tuner.fit()
-        print("Best config is:", results.get_best_result().config)
+    #    results = tuner.fit()
+    #    print("Best config is:", results.get_best_result().config)
     
-    else:
+    #else:
 
         # train the agent
-        train_agent(config)
+        #train_agent(config)
 
 
     
