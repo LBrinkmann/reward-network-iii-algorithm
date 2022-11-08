@@ -822,8 +822,7 @@ def train_agent(config=None):
 
 
                 # Send the current training result back to Wandb
-                wandb.log({"batch_loss": loss,
-                           "episode": e+1})
+                wandb.log({"batch_loss": loss})
             else:
                 print(f"Skip episode {e+1}")
             print('\n')
@@ -840,6 +839,7 @@ if __name__ == "__main__":
 
     # --------Specify paths--------------------------
     current_dir = os.getcwd()
+    print(f'Current working directory: {current_dir}')
     root_dir = os.sep.join(current_dir.split(os.sep)[:2])
     
     # Specify directories depending on system (local vs cluster)
@@ -857,9 +857,6 @@ if __name__ == "__main__":
         data_dir = os.path.join(project_folder,'data')
         save_dir = os.path.join("../..",'data','solutions')
         log_dir = os.path.join("../..",'data','log')
-
-    # get start time of the script:
-    start = time.time()
 
     # train agent!
     train_agent()
