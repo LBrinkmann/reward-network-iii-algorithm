@@ -733,6 +733,7 @@ def train_agent(config=None):
 
 
         # ---------Loading of the networks---------------------
+        print(f"Loading networks from file: {os.path.join(data_dir,config.data_name)}")
             # Load networks to test
         with open(os.path.join(data_dir,config.data_name)) as json_file:
             train = json.load(json_file)
