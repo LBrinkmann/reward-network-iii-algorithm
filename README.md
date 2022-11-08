@@ -10,6 +10,8 @@ python3 -m venv .venv
 . .venv/bin/activate 
 # Windows
 # source .venv/Scripts/Activate 
+
+
 pip install --upgrade pip
 pip install wheel
 pip install -r requirements.txt
@@ -56,17 +58,48 @@ C(data/train.json) --> D(notebooks/try_vectorization.ipynb)
 end
 ```
 
-### DQN
+### DQN + Wandb
+
+Training the DQN model both locally and on cluster is organized in the `wandb_on_slurm.py` script.
+
+First, we create a sweep ID (command `create`) by specifying a parameter grid file: this file contains the path to the script to run (in our case `notebooks/dqn_agent.py`), parameter names and respective values.
+
+```python
+python wandb_on_slurm.py create params/dqn/grid.yaml
+```
+
+After we get the sweep ID we can:
+
+* run the sweep locally (command `local` followed by sweep ID)
+
+```python
+python wandb_on_slurm.py local <sweep_id>
+```
+
+* run the sweep on SLURM cluster (command `slurm` followed by sweep ID and the worker in the cluster)
+
+```python
+python wandb_on_slurm.py slurm <sweep_id> <number or worker>
+```
 
 ```mermaid
 
 flowchart TD
 
-subgraph DQN
-A(params/dqn_agent.yml) --> B(notebooks/dqn_agent.py)
-D(notebooks/environment_vect.py) --> B(notebooks/dqn_agent.py)
-C(data/train.json) --> B(notebooks/dqn_agent.py) 
+subgraph SweepID
+A(params/dqn/grid.yaml) --> B(wandb_on_slurm.py)
+B(wandb_on_slurm.py) --> C(sweep ID)
+end
 
-B(notebooks/dqn_agent.py) --> F(cluster/dqn_submit_job.sh)
+C(sweep ID) --> D{Local or SLURM cluster?}
+D{Local or SLURM cluster?} --> E(wandb_on_slurm.py) & G(wandb_on_slurm.py)
+
+subgraph Local
+E(wandb_on_slurm.py) --> F(notebooks/dqn_agent.py)
+end
+
+subgraph Slurm
+H(notebooks/dqn_agent.py) --> G(wandb_on_slurm.py)
+I(cluster/slurm_template.sh) --> G(wandb_on_slurm.py)
 end
 ```
