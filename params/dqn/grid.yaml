@@ -1,4 +1,4 @@
-program: notebooks/dqn_agent.py
+program: notebooks/dqn_agent.py 
 method: grid
 metric:
   goal: minimize
@@ -9,7 +9,7 @@ parameters:
   n_episodes:
     value: 500
   n_networks:
-    value: 945
+    value: 954
   n_rounds:
     value: 8
   n_nodes:
