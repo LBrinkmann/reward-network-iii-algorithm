@@ -23,6 +23,8 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
 from typing import Optional
+from types import SimpleNamespace
+import pickle
 import argparse
 
 # filesystem and log file specific imports
@@ -79,7 +81,7 @@ class Agent:
 
         Args:
             obs_dim (int): number of elements present in the observation (2, action space observation + valid action mask)
-            config_params (dict): a dict of all parameters and constants of the reward network problem (e.g. number of nodes, number of networks..)
+            config (dict): a dict of all parameters and constants of the reward network problem (e.g. number of nodes, number of networks..)
             action_dim (tuple): shape of action space of one environment
             save_dir (str): path to folder where to save model checkpoints into
             device: torhc device (cpu or cuda)
@@ -202,23 +204,26 @@ class Agent:
         return action[:,0],action_q_values
 
 
-    def td_estimate(self, state, state_mask):
+    def td_estimate(self, state, state_mask, action):
         """
         This function returns the TD estimate for a (state,action) pair - the predicted optimal Q∗ for a given state s
         
         Args:
             state (dict of th.tensor): observation
             state_mask (th.tensor): boolean mask to the observation matrix
+            action (th.tensor): actions taken in all envs from memory sample
 
         Returns:
             td_est: Q∗_online(s,a)
         """
         
         # we use the online model here we get Q_online(s,a)
-        td_est = self.policy_net(state)#[np.arange(0, self.batch_size), action]
+        td_est = self.policy_net(state)
         # apply masking (invalid actions set to very low Q value)
         td_est = self.apply_mask(td_est,state_mask)
-        return td_est
+        # select Q values for the respective actions from memory sample
+        td_est_actions = th.squeeze(td_est).gather(-1,th.unsqueeze(action,-1)).squeeze(-1)
+        return td_est_actions
 
     # note that we don't want to update target net parameters by backprop (hence the th.no_grad),
     # instead the online net parameters will take the place of the target net parameters periodically
@@ -281,7 +286,6 @@ class Agent:
         # then do gradient descent step to try to minimize loss
         loss = self.loss_fn(td_estimate, td_target)
         print(f'loss shape -> {loss.shape}')
-        print(f'loss -> {loss}')
         self.optimizer.zero_grad()
 
         # we apply mean to get from dimension (batch_size,1) to 1 (scalar)
@@ -351,18 +355,15 @@ class Agent:
 
         print('\n')
         # Get TD Estimate (mask alreadzy applied in function)
-        td_est = self.td_estimate(state, state_mask)
+        td_est = self.td_estimate(state, state_mask, action)
         print(f'Calculated td_est of shape {td_est.shape}')
-        # like this?
-        td_est_try = th.squeeze(td_est).gather(-1,th.unsqueeze(action,-1)).squeeze(-1)
-        print(f'Calculated td_est try of shape {td_est_try.shape}')
         # Get TD Target
         td_tgt = self.td_target(reward, state, state_mask)
         print(f'td_tgt shape {td_tgt.shape}')
 
         print('\n')
         # Backpropagate loss through Q_online
-        loss = self.update_Q_online(td_est_try, td_tgt)
+        loss = self.update_Q_online(td_est, td_tgt)
         #loss = self.update_Q_online(td_est, td_tgt)
 
         return td_est.mean().item(), loss
@@ -484,44 +485,6 @@ class Memory():
 # networks), but for each move seperate. It will be good to see, how the
 # q-values evolve over the (in your case) 8 moves. If you record a list of
 # vectors, you can later concatenate them into a single multidimensional metrix.
-
-# I have a method turning a multidimension numpy array into a nice dataframe
-# with useful columns.
-# Example Usage:
-# q_max = numpy array shape episodes x steps
-# df = numpy_to_df(A, ['episodes, 'steps'], value_name='q_max')
-
-# def numpy_to_df(A, columns, value_columns=None, value_name='value'):
-#     """
-#     Turns a multi-dimension numpy array into a single dataframe.
-
-#     Args:
-#         A: multi-dimensional numpy array.
-#         columns: the column name for each dimension.
-#         value_columns: the last dimension can be turned into separate columns
-#             filled with the individual values;
-#             if not None: needs to be list matching in length the size of the
-#             last dimension of A.
-#             if 'None': all values will be stored in a single column
-#         value_name: name for column storing the matrix values (only relevant if
-#         value_columns == None)
-#     """
-#     shape = A.shape
-#     if value_columns is not None:
-#         assert len(columns) == len(shape) - 1
-#         new_shape = (-1, len(value_columns))
-#     else:
-#         assert len(columns) == len(shape)
-#         new_shape = (-1,)
-#         value_columns = [value_name]
-
-#     index = pd.MultiIndex.from_product(
-#         [range(s) for s, c in zip(shape, columns)], names=columns)
-#     df = pd.DataFrame(A.reshape(*new_shape), columns=value_columns, index=index)
-#     df = df.reset_index()
-#     return df
-
-
 #######################################
 
 class MetricLogger:
@@ -559,7 +522,8 @@ class MetricLogger:
                                 'q_max_steps':[],
                                 'q_mean':[], 
                                 'q_min':[],
-                                'q_max':[]}
+                                'q_max':[],
+                                'q_learn':[]}
         self.ep_rewards = []
         self.ep_avg_losses = []
         self.ep_avg_qs = []
@@ -609,10 +573,6 @@ class MetricLogger:
     def log_episode(self):
         """
         Store metrics'values at end of a single episode
-
-        Args:
-            q (th.tensor): q values for each env  
-            loss (float): loss value
         """        
 
         # log the total reward obtained in the episode for each of the networks
@@ -626,11 +586,11 @@ class MetricLogger:
         # log the mean, min and max q value in the episode over all envs but FOR EACH STEP SEPARATELY
         # (apply mask to self.q_step_log ? we are mainly interested in the mean min and max of valid actions)
         self.episode_metrics['q_mean_steps'].append(th.mean(self.q_step_log,dim=0))
-        #self.episode_metrics['q_min_steps'].append(th.amin(self.q_step_log,dim=(1,2)))
+        self.episode_metrics['q_min_steps'].append(th.amin(self.q_step_log,dim=(1,2)))
         self.episode_metrics['q_max_steps'].append(th.amax(self.q_step_log,dim=(1,2)))
         # log the average of mean, min and max q value in the episode ACROSS ALL STEPS
         self.episode_metrics['q_mean'].append(th.mean(self.episode_metrics['q_mean_steps'][-1]))
-        #self.episode_metrics['q_min'].append(th.mean(self.episode_metrics['q_min_steps'][-1]))
+        self.episode_metrics['q_min'].append(th.mean(self.episode_metrics['q_min_steps'][-1]))
         self.episode_metrics['q_max'].append(th.mean(self.episode_metrics['q_max_steps'][-1]))
 
 
@@ -661,9 +621,9 @@ class MetricLogger:
             epsilon (float): the current exploration rate for the greedy policy
         """        
         mean_ep_reward = np.round(th.mean(self.episode_metrics['reward_episode'][-self.take_n_episodes:][0]), 3)
-        #mean_ep_loss = np.round(th.mean(self.episode_metrics['loss'][-self.take_n_episodes:][0]), 3)
+        mean_ep_loss = np.round(th.mean(self.episode_metrics['loss'][-self.take_n_episodes:][0]), 3)
         mean_ep_q_mean = np.round(th.mean(self.episode_metrics['q_mean'][-self.take_n_episodes:][0]), 3)
-        #mean_ep_q_min = np.round(np.mean(self.episode_metrics['q_min'][-self.take_n_episodes:][0]), 3)
+        mean_ep_q_min = np.round(np.mean(self.episode_metrics['q_min'][-self.take_n_episodes:][0]), 3)
         mean_ep_q_max = np.round(th.mean(self.episode_metrics['q_max'][-self.take_n_episodes:][0]), 3)
         self.record_metrics['reward_episode'].append(mean_ep_reward)
         #self.record_metrics['loss'].append(mean_ep_loss)
@@ -689,10 +649,12 @@ class MetricLogger:
         """
         Saves moving average metrics as csv file
         """
-        metrics_df = pd.DataFrame.from_dict(self.record_metrics,
-                                            orient='index',
-                                            columns=list(self.record_metrics.keys()))
-        metrics_df.to_csv(os.path.join(self.save_dir,'moving_average_metrics.csv'),sep='\t')
+        with open(os.path.join(self.save_dir,'metrics.pickle'), 'wb') as handle:
+            pickle.dump(self.episode_metrics, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        #metrics_df = pd.DataFrame.from_dict(self.record_metrics,
+        #                                    orient='index',
+        #                                    columns=list(self.record_metrics.keys()))
+        #metrics_df.to_csv(os.path.join(self.save_dir,'moving_average_metrics.csv'),sep='\t')
 
     def plot_metric(self):
 
@@ -702,7 +664,8 @@ class MetricLogger:
                           #"ep_loss":save_dir / "loss_plot.pdf",
                           "q_mean":os.path.join(self.save_dir,"reward_all_envs_mean_q.pdf"),
                           #"ep_min_q":save_dir / "min_q_plot.pdf",
-                          "q_max":os.path.join(self.save_dir,"reward_all_envs_max_q.pdf")}
+                          "q_max":os.path.join(self.save_dir,"reward_all_envs_max_q.pdf"),
+                          "loss":os.path.join(self.save_dir,"loss_all_envs.pdf"),}
 
 
         for metric_name, metric_plot_path in self.plot_attr.items():
@@ -718,19 +681,121 @@ class MetricLogger:
 #######################################
 ## TRAINING FUNCTION
 #######################################
-def train_agent(config=None):
+def train_agent(config=None,use_wandb=True):
     """
     Train AI agent to solve reward networks
 
     Args:
         config (dict): dict containing parameter values, data paths and
                        flag to run or not run hyperparameter tuning
+        use_wandb (bool)
     """      
-    
-    # Initialize a new wandb run
-    with wandb.init(config=config):
-        config = wandb.config
+    print(f'Using Wandb -> {use_wandb}')
+    if use_wandb:
+        
+        # Initialize a new wandb run
+        with wandb.init(config=config):
+            config = wandb.config
 
+            # ---------Loading of the networks---------------------
+            print(f"Loading networks from file: {os.path.join(data_dir,config.data_name)}")
+                # Load networks to test
+            with open(os.path.join(data_dir,config.data_name)) as json_file:
+                train = json.load(json_file)
+            test = train[:]
+            print(f"Number of networks loaded: {len(test)}")
+            # add number of netowkrs to config
+            #config['n_networks'] = len(test)
+
+
+            # ---------Specify device (cpu or cuda)----------------
+            use_cuda = th.cuda.is_available()
+            print(f"Using CUDA: {use_cuda} \n")
+            if not use_cuda:
+                DEVICE = th.device('cpu')
+            else:
+                DEVICE=th.device('cuda')
+
+            # ---------Start analysis------------------------------
+            # initialize environment(s)
+            env = Reward_Network(test)
+
+            # initialize Agent
+            AI_agent = Agent(obs_dim=2,
+                            config = config,
+                            action_dim=env.action_space_idx.shape, 
+                            save_dir=out_dir,
+                            device=DEVICE)
+
+            # initialize Memory buffer
+            Mem = Memory(device=DEVICE, size=config.memory_size, n_rounds=config.n_rounds)
+
+            # initialize Logger
+            logger = MetricLogger(out_dir,config.n_networks,config.n_episodes,config.n_nodes)
+
+
+            for e in range(config.n_episodes):
+                print(f'----EPISODE {e+1}---- \n')
+
+                # reset env(s)
+                env.reset()
+                # obtain first observation of the env(s)
+                obs = env.observe()
+
+                for round in range(config.n_rounds):
+
+                    # Solve the reward networks!
+                    #while True:
+                    print('\n')
+                    print(f'ROUND/STEP {round} \n')
+
+                    # choose action to perform in environment(s)
+                    action,step_q_values = AI_agent.act(obs)
+                    #print(f'q values for step {round} -> \n {step_q_values[:,:,0].detach()}')
+                    # agent performs action
+                    # if we are in the last step we only need reward, else output also the next state
+                    if round!=7:
+                        next_obs, reward = env.step(action,round)
+                    else:
+                        reward = env.step(action,round)
+                    #print(f'reward -> {reward}')
+                    # remember transitions in memory
+                    Mem.store(**obs,round=round,reward=reward, action=action)
+                    if round!=7:
+                        obs = next_obs
+                    # Logging (step)
+                    logger.log_step(reward,step_q_values,round)
+
+                    if env.is_done:
+                        break
+                
+                #--END OF EPISODE--
+                Mem.finish_episode()
+
+                logger.log_episode()
+                
+                print('\n')
+                print('\n')
+                print(f'EPISODE {e+1} MEMORY SAMPLE!')
+                sample = Mem.sample(config.batch_size,device=DEVICE)
+                if sample is not None:
+                    #for k,v in sample.items():
+                    #    print(k, v.shape)
+                    print('\n')
+                    print('\n')
+                    # Learning step
+                    q, loss = AI_agent.learn(sample)
+
+
+                    # Send the current training result back to Wandb
+                    wandb.log({"batch_loss": loss})
+                else:
+                    print(f"Skip episode {e+1}")
+                print('\n')
+
+#####################
+
+    else:
 
         # ---------Loading of the networks---------------------
         print(f"Loading networks from file: {os.path.join(data_dir,config.data_name)}")
@@ -738,9 +803,7 @@ def train_agent(config=None):
         with open(os.path.join(data_dir,config.data_name)) as json_file:
             train = json.load(json_file)
         test = train[:]
-        # add number of netowkrs to config
-        #config['n_networks'] = len(test)
-
+        print(f"Number of networks loaded: {len(test)}")
 
         # ---------Specify device (cpu or cuda)----------------
         use_cuda = th.cuda.is_available()
@@ -756,7 +819,7 @@ def train_agent(config=None):
 
         # initialize Agent
         AI_agent = Agent(obs_dim=2,
-                        config_params = config,
+                        config = config,
                         action_dim=env.action_space_idx.shape, 
                         save_dir=out_dir,
                         device=DEVICE)
@@ -805,7 +868,6 @@ def train_agent(config=None):
             
             #--END OF EPISODE--
             Mem.finish_episode()
-
             logger.log_episode()
             
             print('\n')
@@ -813,22 +875,19 @@ def train_agent(config=None):
             print(f'EPISODE {e+1} MEMORY SAMPLE!')
             sample = Mem.sample(config.batch_size,device=DEVICE)
             if sample is not None:
-                #for k,v in sample.items():
-                #    print(k, v.shape)
-                print('\n')
                 print('\n')
                 # Learning step
                 q, loss = AI_agent.learn(sample)
-
-
-                # Send the current training result back to Wandb
-                wandb.log({"batch_loss": loss})
+                logger.log_episode_learn(q,loss)
+                
             else:
                 print(f"Skip episode {e+1}")
             print('\n')
 
         # final logging
-        #logger.plot_metric()
+        logger.save_metrics()
+
+
 
 
 #######################################
@@ -836,6 +895,12 @@ def train_agent(config=None):
 #######################################
 
 if __name__ == "__main__":
+
+    # --------Specify arguments--------------------------
+    parser = argparse.ArgumentParser(description="DQN Argument Parser (Project: Reward Networks III)",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("-l", "--local", action="store_true", help="run locally and do not use wandb")
+    args = parser.parse_args()
 
     # --------Specify paths--------------------------
     current_dir = os.getcwd()
@@ -855,67 +920,31 @@ if __name__ == "__main__":
         # Specify directories (local)
         project_folder = os.getcwd()
         data_dir = os.path.join(project_folder,'data')
-        save_dir = os.path.join("../..",'data','solutions')
-        log_dir = os.path.join("../..",'data','log')
-
-    # train agent!
-    train_agent()
-
-    # --------Specify arguments--------------------------
-    #parser = argparse.ArgumentParser(description="DQN Argument Parser (Project: Reward Networks III)",
-    #                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    #parser.add_argument("-t", "--tune", action="store_true", help="run hyperparameter tuning")
-    #parser.add_argument("data_src", type=str, help="Data source location (path to JSON networks file)")
-    #parser.add_argument("results_dest", type=str, help="Results location (checkpoints + figures + logs)")
-    #args = parser.parse_args()
+        out_dir = os.path.join(os.path.split(project_folder)[0],'data','log')
 
 
-    # ---------Parameters----------------------------------
-    #config = {'data_path':os.path.join(args.data_src,'train_viz_test.json'),
-    #          'log_path':os.path.join(os.path.split(project_folder)[0],'data/log'),
-    #          'n_episodes':500,
-    #          'n_rounds':8,
-    #          'n_nodes':10,
-    #          'batch_size':10,
-    #          'memory_size':50,
-    #          'lr':0.0001,
-    #          'nn_hidden_size':10,
-    #          'exploration_rate_decay':0.8,
-    #          'nn_update_frequency':500,
-    #          'tune':False
-    #          }
-
-    # if we want to run hyperparameter tuning then define search space and 
-    # Ray Tune object TODO: remove and use wandb instead
-    #if (args.tune==True):
-        
-        # set tune option to true
-    #    config['tune']=True
-
-        # Define a search space and initialize the search algorithm.
-    #    search_space = {"lr": tune.grid_search([1e-5, 1e-4]),
-    #                    "batch_size":tune.qrandint(5,20),
-    #                    "memory_size":tune.qrandint(50,500),
-    #                    "nn_hidden_size":tune.qrandint(5,20),
-    #                    'exploration_rate_decay':tune.grid_search([0.6, 0.95]),
-    #                    'nn_update_frequency':tune.qrandint(50,500)}
-    #    algo = OptunaSearch()
-
-    #    # Start a Tune run that maximizes mean accuracy and stops after 5 iterations.
-    #    tuner = tune.Tuner(train_agent,
-    #                       tune_config=tune.TuneConfig(metric="loss",
-    #                                                   mode="min",
-    #                                                   search_alg=algo),
-    #                       run_config=air.RunConfig(stop={"training_iteration": 5}),
-    #                       param_space=search_space)
-
-    #    results = tuner.fit()
-    #    print("Best config is:", results.get_best_result().config)
+    if (args.local==True):
+        # ---------Default Parameters for local testing -------------------
+        config_default_dict = {'data_name':'train_viz_test.json',
+                               'n_episodes':500,
+                               'n_networks':954,
+                               'n_rounds':8,
+                               'n_nodes':10,
+                               'batch_size':10,
+                               'memory_size':50,
+                               'lr':0.0001,
+                               'nn_hidden_size':10,
+                               'exploration_rate_decay':0.8,
+                               'nn_update_frequency':200
+                               }
+        config_default = SimpleNamespace(**config_default_dict)
+        # train agent!
+        train_agent(config=config_default,use_wandb=False)
     
-    #else:
+    else:
 
-        # train the agent
-        #train_agent(config)
+        # train agent!
+        train_agent()
 
 
     
