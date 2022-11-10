@@ -38,7 +38,7 @@ class Reward_Network(gym.Env):
         self.id = self.network['network_id']
         self.nodes = [n['node_num'] for n in self.network['nodes']]
         self.action_space = self.network['edges']
-        self.possible_rewards = [-100, -20, 0, 20, 140]
+        self.possible_rewards = [-100, -20, 0, 20, 100]
         self.reward_range = (min(self.possible_rewards)*self.MAX_STEP,self.network['max_reward'])
 
         if to_log:
