@@ -3,6 +3,7 @@
 *.egg-info
 
 .venv
+.idea
 .egg-info
 *.pyc
 *.DS_Store
