@@ -1,4 +1,4 @@
-program: notebooks/dqn_agent.py 
+program: dqn/dqn_agent.py
 method: grid
 metric:
   goal: minimize

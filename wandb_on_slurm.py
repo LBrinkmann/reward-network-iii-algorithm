@@ -16,7 +16,7 @@ def write_file(string, filename):
 
 
 def create_script(job_file_target, **kwargs):
-    script_str = read_file("cluster/slurm_template.sh")
+    script_str = read_file("dqn/slurm_template.sh")
     script_str = script_str.format(**kwargs)
     write_file(script_str, job_file_target)
 
