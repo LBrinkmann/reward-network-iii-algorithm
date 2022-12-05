@@ -3,13 +3,14 @@ import json
 import random
 import string
 import yaml
+import os
 from collections import Counter
 
 import networkx as nx
 import numpy as np
 
-from .network import Network, Node, Edge
-from .environment import Environment
+from network import Network, Node, Edge
+from environment import Environment
 
 # from .utils import parse_network, calculate_q_value, calculate_trace
 
@@ -262,14 +263,38 @@ class NetworkGenerator:
         )
 
     def save_as_json(self):
-        return json.dumps(self.networks)
+        """
+        filename: path to save networks file to
+        """
+        #return json.dumps(self.networks)
+        return json.dumps([ob.__dict__ for ob in self.networks])
+
 
 
 if __name__ == "__main__":
+
+    # --------Specify paths--------------------------
+    current_dir = os.getcwd()
+    print(f"Current working directory: {current_dir}")
+    root_dir = os.sep.join(current_dir.split(os.sep)[:2])
+
+    # Specify directories depending on system
+    if root_dir == "/mnt":  # (cluster)
+        user_name = os.sep.join(current_dir.split(os.sep)[4:5])
+        home_dir = f"/mnt/beegfs/home/{user_name}"
+        project_dir = os.path.join(home_dir, "CHM", "reward_networks_III", "reward-network-iii-algorithm")
+        code_dir = os.path.join(project_dir, "generate")
+        params_dir = os.path.join(project_dir, "params", "generate")
+        data_dir = os.path.join(project_dir, "data")
+
+    elif root_dir == "/Users":  # (local)
+        project_dir = os.path.split(os.getcwd())[0]
+        data_dir = os.path.join(project_dir, "data")
+        params_dir = os.path.join(project_dir, "params", "generate")
 
     environment = load_yaml("../params/generate/default_environment.yml")
     generate_params = Environment(**environment)
 
     net_generator = NetworkGenerator(generate_params)
-    networks = net_generator.generate(1000)
+    networks = net_generator.generate(100)
     net_generator.save_as_json()
