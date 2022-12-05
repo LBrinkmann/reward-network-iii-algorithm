@@ -8,14 +8,13 @@
 # Center for Humans and Machines, MPIB Berlin
 ###############################################
 
-import argparse
 import datetime
 import json
 # filesystem and log file specific imports
 import os
 import pickle
 import time
-from types import SimpleNamespace
+from pydantic import BaseModel
 
 import matplotlib.pyplot as plt
 # import modules
@@ -25,10 +24,23 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 import wandb
-from tqdm import tqdm
+WANDB_ENABLED = os.environ.get("WANDB_MODE", "enabled") == "enabled"
 
 # import the custom reward network environment class
 from environment_vect import Reward_Network
+
+
+class Config(BaseModel):
+    data_name: str = "train_viz_test.json"
+    n_episodes: int = 500
+    n_networks: int = 954
+    n_rounds: int = 8
+    learning_rate: list = [1.e-3, 1.e-4, 3.e-4]
+    batch_size: list = [8, 16, 32]
+    nn_hidden_layer_size: list = [5, 10, 15]
+    memory_size: list = [50, 100, 200]
+    exploration_rate_decay: list = [0.7, 0.8, 0.9]
+    nn_update_frequency: list = [50, 100, 200, 500]
 
 
 #######################################
@@ -97,7 +109,7 @@ class Agent:
         hidden_size = (
             config.n_networks,
             config.n_nodes,
-            config.nn_hidden_size,
+            config.nn_hidden_layer_size,
         )
         # one q value for each action
         output_size = (
@@ -126,7 +138,7 @@ class Agent:
         self.save_every = 1e4  # no. of experiences between Q_target & Q_online sync
 
         # specify which loss function and which optimizer to use (and their respective params)
-        self.lr = config.lr
+        self.lr = config.learning_rate
         self.optimizer = th.optim.Adam(self.policy_net.parameters(), lr=self.lr)
         self.loss_fn = th.nn.SmoothL1Loss(reduction="none")
 
@@ -854,10 +866,11 @@ def train_agent_local(config):
             # print(f'q values for step {round} -> \n {step_q_values[:,:,0].detach()}')
             # agent performs action
             # if we are in the last step we only need reward, else output also the next state
+
             if round_num != 7:
                 next_obs, reward = env.step(action, round_num)
             else:
-                reward = env.step(action, round_num)
+                _, reward = env.step(action, round_num)
             # remember transitions in memory
             Mem.store(round_num, reward=reward, action=action, **obs)
             if round_num != 7:
@@ -895,14 +908,14 @@ def train_agent_local(config):
 if __name__ == "__main__":
 
     # --------Specify arguments--------------------------
-    parser = argparse.ArgumentParser(
-        description="DQN Argument Parser (Project: Reward Networks III)",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "-l", "--local", action="store_true", help="run locally and do not use wandb"
-    )
-    args = parser.parse_args()
+    # parser = argparse.ArgumentParser(
+    #    description="DQN Argument Parser (Project: Reward Networks III)",
+    #    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    # )
+    # parser.add_argument(
+    #    "-l", "--local", action="store_true", help="run locally and do not use wandb"
+    # )
+    # args = parser.parse_args()
 
     # --------Specify paths--------------------------
     current_dir = os.getcwd()
@@ -924,26 +937,26 @@ if __name__ == "__main__":
         data_dir = os.path.join(project_folder, "data")
         out_dir = os.path.join(os.path.split(project_folder)[0], "data", "log")
 
-    if args.local:
-        # ---------Default Parameters for local testing -------------------
-        config_default_dict = {
-            "data_name": "train_viz_test.json",
-            "n_episodes": 100,
-            "n_networks": 954,
-            "n_rounds": 8,
-            "n_nodes": 10,
-            "batch_size": 10,
-            "memory_size": 50,
-            "lr": 0.0001,
-            "nn_hidden_size": 10,
-            "exploration_rate_decay": 0.8,
-            "nn_update_frequency": 200,
-        }
-        config_default = SimpleNamespace(**config_default_dict)
-        # train agent!
-        train_agent_local(config=config_default)
+    # if args.local:
+    #     # ---------Default Parameters for local testing -------------------
+    #     config_default_dict = {
+    #         "data_name": "train_viz_test.json",
+    #         "n_episodes": 100,
+    #         "n_networks": 954,
+    #         "n_rounds": 8,
+    #         "n_nodes": 10,
+    #         "batch_size": 10,
+    #         "memory_size": 50,
+    #         "lr": 0.0001,
+    #         "nn_hidden_size": 10,
+    #         "exploration_rate_decay": 0.8,
+    #         "nn_update_frequency": 200,
+    #     }
+    #     config_default = SimpleNamespace(**config_default_dict)
+    #     # train agent!
+    #     train_agent_local(config=config_default)
 
-    else:
+    # else:
 
-        # train agent!
-        train_agent()
+    # train agent!
+    train_agent()
