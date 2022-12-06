@@ -46,6 +46,22 @@ class Config(BaseModel):
 WANDB_ENABLED = os.environ.get("WANDB_MODE", "enabled") == "enabled"
 
 
+def train():
+    if WANDB_ENABLED:
+        with wandb.init():
+            config = Config(**wandb.config)
+            train_agent(wandb.config)
+    else:
+        config = Config()
+        train_agent(config)
+
+
+def log(data):
+    if WANDB_ENABLED:
+        wandb.log(data)
+    else:
+        print(" | ".join(f"{k}: {v}" for k, v in data.items()))
+
 class Agent:
     def __init__(
             self, obs_dim: int, config: dict, action_dim: tuple, save_dir: str, device
@@ -591,7 +607,6 @@ def train_agent(config=None):
     # Load networks to test
     with open(os.path.join(data_dir, config.data_name)) as json_file:
         networks = json.load(json_file)
-    #test = train[:]
     print(f"Number of networks loaded: {len(networks)}")
 
     # ---------Specify device (cpu or cuda)----------------
@@ -679,117 +694,6 @@ def train_agent(config=None):
         else:
             print(f"Skip episode {e + 1}")
         print("\n")
-
-
-# def train_agent_local(config):
-#     """
-#     Train dqn agent locally, with a default config parameter dictionary
-#     """
-#     # ---------Loading of the networks---------------------
-#     print(f"Loading networks from file: {os.path.join(data_dir, config.data_name)}")
-#     # Load networks to test
-#     with open(os.path.join(data_dir, config.data_name)) as json_file:
-#         train = json.load(json_file)
-#     test = train[:]
-#     print(f"Number of networks loaded: {len(test)}")
-#
-#     # ---------Specify device (cpu or cuda)----------------
-#     if not th.cuda.is_available():
-#         DEVICE = th.device("cpu")
-#     else:
-#         DEVICE = th.device("cuda")
-#
-#     # ---------Start analysis------------------------------
-#     # initialize environment(s)
-#     env = Reward_Network(test)
-#
-#     # initialize Agent
-#     AI_agent = Agent(
-#         obs_dim=2,
-#         config=config,
-#         action_dim=env.action_space_idx.shape,
-#         save_dir=out_dir,
-#         device=DEVICE,
-#     )
-#
-#     # initialize Memory buffer
-#     Mem = Memory(device=DEVICE, size=config.memory_size, n_rounds=config.n_rounds)
-#
-#     # initialize Logger
-#     logger = MetricLogger(
-#         out_dir, config.n_networks, config.n_episodes, config.n_nodes
-#     )
-#
-#     for e in range(config.n_episodes):
-#         print(f"----EPISODE {e + 1}---- \n")
-#
-#         # reset env(s)
-#         env.reset()
-#         # obtain first observation of the env(s)
-#         obs = env.observe()
-#
-#         for round_num in range(config.n_rounds):
-#
-#             # Solve the reward networks!
-#             # while True:
-#             print("\n")
-#             print(f"ROUND/STEP {round_num} \n")
-#
-#             # choose action to perform in environment(s)
-#             action, step_q_values = AI_agent.act(obs)
-#             # print(f'q values for step {round} -> \n {step_q_values[:,:,0].detach()}')
-#             # agent performs action
-#             # if we are in the last step we only need reward, else output also the next state
-#
-#             if round_num != 7:
-#                 next_obs, reward = env.step(action, round_num)
-#             else:
-#                 _, reward = env.step(action, round_num)
-#             # remember transitions in memory
-#             Mem.store(round_num, reward=reward, action=action, **obs)
-#             if round_num != 7:
-#                 obs = next_obs
-#             # Logging (step)
-#             logger.log_step(reward, step_q_values, round_num)
-#
-#             if env.is_done:
-#                 break
-#
-#         # --END OF EPISODE--
-#         Mem.finish_episode()
-#         logger.log_episode()
-#
-#         print(f"EPISODE {e + 1} MEMORY SAMPLE!")
-#         sample = Mem.sample(config.batch_size, device=DEVICE)
-#         if sample is not None:
-#             print("\n")
-#             # Learning step
-#             q, loss = AI_agent.learn(sample)
-#             logger.log_episode_learn(q, loss)
-#
-#         else:
-#             print(f"Skip episode {e + 1}")
-#         print("\n")
-#
-#     # final logging
-#     logger.save_metrics()
-
-
-def train():
-    if WANDB_ENABLED:
-        with wandb.init():
-            config = Config(**wandb.config)
-            train_agent(wandb.config)
-    else:
-        config = Config()
-        train_agent(config)
-
-
-def log(data):
-    if WANDB_ENABLED:
-        wandb.log(data)
-    else:
-        print(" | ".join(f"{k}: {v}" for k, v in data.items()))
 
 
 if __name__ == "__main__":
