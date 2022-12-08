@@ -1,4 +1,4 @@
-# Reward Network II
+# Reward Network III
 
 ## Install required packages
 
@@ -19,10 +19,10 @@ pip install -r requirements.txt
 
 ## Repo organization
 
-* **notebooks**: includes `.ipynb`,`.py` files to generate reward networks and solve them
-* **cluster**: includes bash script(s) to submit jobs to the MPI SLURM cluster (Tardis)
-* **models**: includes `.py` files used for parsing and validation of JSON data
-* **params**: includes `.yml` files for each file in notebooks specifying parameters
+* **generate**: includes `.py` scripts to generate reward networks, as well as pydantic models to validate the generated networks structure
+* **solve**: includes `.py` scripts to solve networks according to rule-based strategies
+* **dqn**: includes `.py` files used for solving networks through deep reinforcement learning, as well as `.sh`files used to submit dqn runs on cluster
+* **params**: includes `.yml` files relevant to each subfolder (generate, solve, dqn)
 * **rn**: includes utilities used in the scripts in `notebooks` folder
 * **data**: includes json files where all generated reward networks used in the experiment are stored. The `_viz` suffix in the file names indicate those data files that have additional node location information (for frontend vizualization purposes)
 
@@ -35,12 +35,10 @@ pip install -r requirements.txt
 flowchart TD
 
 subgraph Generation
-A(params/generation.yml) --> B(notebooks/generation.ipynb)
-W(models/network.py) --> B(notebooks/generation.ipynb)
-H(notebooks/models.py) --> B(notebooks/generation.ipynb)
-G(notebooks/utils.py) --> B(notebooks/generation.ipynb)
-B(notebooks/generation.ipynb) --> C(data/train.json)
-B(notebooks/generation.ipynb) --> X(data/test.json)
+A(params/generate/generation.yml) --> B(generate/generation.py)
+W(generate/network.py) --> B(generate/generation.py)
+H(generate/environment.py) --> B(generate/generation.py)
+B(generate/generation.py) --> C(data/networks.json)
 end
 ```
 
@@ -51,10 +49,10 @@ end
 flowchart TD
 
 subgraph Rule-based
-A(params/environment.yml) --> L(notebooks/environment.py)
-L(notebooks/environment.py) --> B(notebooks/rule_based.ipynb)
-C(data/train.json) --> B(notebooks/rule_based.ipynb)
-C(data/train.json) --> D(notebooks/try_vectorization.ipynb)
+A(params/rule_based_solve/environment.yml) --> L(solve/rule_based.py)
+G(solve/environment.py) --> L(solve/rule_based.py)
+L(solve/rule_based.py) --> B(data/solutions.json)
+L(solve/rule_based.py) --> D(data/solutions.csv)
 end
 ```
 
@@ -95,11 +93,11 @@ C(sweep ID) --> D{Local or SLURM cluster?}
 D{Local or SLURM cluster?} --> E(wandb_on_slurm.py) & G(wandb_on_slurm.py)
 
 subgraph Local
-E(wandb_on_slurm.py) --> F(notebooks/dqn_agent.py)
+E(wandb_on_slurm.py) --> F(dqn/dqn_agent.py)
 end
 
 subgraph Slurm
-H(notebooks/dqn_agent.py) --> G(wandb_on_slurm.py)
-I(cluster/slurm_template.sh) --> G(wandb_on_slurm.py)
+H(dqn/dqn_agent.py) --> G(wandb_on_slurm.py)
+I(dqn/slurm_template.sh) --> G(wandb_on_slurm.py)
 end
 ```
