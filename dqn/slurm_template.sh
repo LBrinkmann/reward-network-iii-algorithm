@@ -13,7 +13,7 @@ set -e
 module load python/3.10
 module load cuda
 
-source ../.venv/bin/activate
+source .venv/bin/activate
 
 echo "Entered environment"
 
