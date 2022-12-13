@@ -62,6 +62,7 @@ def log(data):
     else:
         print(" | ".join(f"{k}: {v}" for k, v in data.items()))
 
+
 class Agent:
     def __init__(
             self, obs_dim: int, config: dict, action_dim: tuple, save_dir: str, device
@@ -112,8 +113,10 @@ class Agent:
             config.n_nodes,
             1,
         )
-        self.policy_net = DQN(input_size, output_size, hidden_size, self.device)
-        self.target_net = DQN(input_size, output_size, hidden_size, self.device)
+        self.policy_net = DQN(input_size, output_size, hidden_size)
+        self.policy_net = self.policy_net.to(self.device)
+        self.target_net = DQN(input_size, output_size, hidden_size)
+        self.target_net = self.target_net.to(self.device)
 
         # specify \epsilon greedy policy exploration parameters (relevant in exploration)
         self.exploration_rate = 1
@@ -139,7 +142,6 @@ class Agent:
 
         # specify output directory
         self.save_dir = save_dir
-
 
     @staticmethod
     def apply_mask(q_values, mask):
@@ -176,12 +178,10 @@ class Agent:
             obs, dict
         ), f"Wrong length of state representation: expected dict of size {self.obs_dim}, got: {len(obs)}"
 
-        # for the moment keep a random action selection strategy to mock agent choosing action
-        # action_idx = th.squeeze(th.multinomial(obs['mask'].type(th.float),1))
+        obs['mask'] = obs['mask'].to(self.device)
+        obs["obs"] = obs["obs"].to(self.device)
 
         # EXPLORE (select random action from the action space)
-        # if np.random.rand() < self.exploration_rate:
-        # random_actions = th.squeeze(th.multinomial(obs['mask'].type(th.float),1))
         random_actions = th.multinomial(obs["mask"].type(th.float), 1)
         # print(f'random actions {th.squeeze(random_actions,dim=-1)}')
 
@@ -191,7 +191,7 @@ class Agent:
         # apply masking to obtain Q values for each VALID action (invalid actions set to very low Q value)
         action_q_values = self.apply_mask(action_q_values, obs["mask"])
         # select action with highest Q value
-        greedy_actions = th.argmax(action_q_values, dim=1)  # .item()
+        greedy_actions = th.argmax(action_q_values, dim=1).to(self.device)
         # print(f'greedy actions {th.squeeze(greedy_actions,dim=-1)}')
 
         # select between random or greedy action in each env
@@ -225,6 +225,7 @@ class Agent:
         """
 
         # we use the online model here we get Q_online(s,a)
+        state = state.to(self.device)
         td_est = self.policy_net(state)
         # apply masking (invalid actions set to very low Q value)
         td_est = self.apply_mask(td_est, state_mask)
@@ -250,6 +251,7 @@ class Agent:
             td_tgt: estimated q values from target net
         """
 
+        state = state.to(self.device)
         # state has dimensions batch_size,n_steps,n_networks,n_nodes,
         # length of one hot encoded observation info - in our case 20
         print(f"state shape -> {state.shape}")
@@ -598,7 +600,7 @@ def train_agent(config=None):
     """
 
     # Initialize a new wandb run
-    #with wandb.init(config=config):
+    # with wandb.init(config=config):
     #    config = wandb.config
 
     # ---------Loading of the networks---------------------
@@ -665,7 +667,7 @@ def train_agent(config=None):
             if round_num != 7:
                 obs = next_obs
             # Logging (step)
-            #logger.log_step(reward, step_q_values, round_num)
+            # logger.log_step(reward, step_q_values, round_num)
 
             if env.is_done:
                 break
