@@ -7,7 +7,7 @@ parameters:
   data_name:
     value: "train_viz_test.json"
   n_episodes:
-    value: 500
+    value: 10000
   n_networks:
     value: 954
   n_rounds:
