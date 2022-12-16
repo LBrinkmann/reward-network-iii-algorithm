@@ -1,0 +1,65 @@
+levels:
+  - color: "white"
+    min_n_nodes: 4
+    max_n_nodes: 4
+    is_start: True
+  - color: "paleturquoise"
+    min_n_nodes: 1
+  - color: "lightskyblue"
+    min_n_nodes: 1
+  - color: "royalblue"
+    min_n_nodes: 1
+  - color: "blue"
+    min_n_nodes: 2
+    max_n_nodes: 2
+n_nodes: 10
+n_steps: 12
+n_edges_per_node: 2
+rewards:
+  - reward: -100
+    color: "red"
+  - reward: -20
+    color: "coral"
+  - reward: 0
+    color: "lightgrey"
+  - reward: 20
+    color: "lightgreen"
+  - reward: 200
+    color: "green"
+edges:
+  - from_level: 0
+    to_levels: [0]
+    rewards: [1, 2, 3]
+  - from_level: 0
+    to_levels: [1]
+    rewards: [0]
+  - from_level: 1
+    to_levels: [0]
+    rewards: [2]
+  - from_level: 1
+    to_levels: [1]
+    rewards: [3]
+  - from_level: 1
+    to_levels: [2]
+    rewards: [0]
+  - from_level: 2
+    to_levels: [0, 1]
+    rewards: [1]
+  - from_level: 2
+    to_levels: [2]
+    rewards: [2]
+  - from_level: 2
+    to_levels: [3]
+    rewards: [3]
+  - from_level: 3
+    to_levels: [0, 1, 2]
+    rewards: [1]
+  - from_level: 3
+    to_levels: [3]
+    rewards: [2]
+  - from_level: 3
+    to_levels: [4]
+    rewards: [3]
+  - from_level: 4
+    to_levels: [3, 4]
+    rewards: [3, 4]

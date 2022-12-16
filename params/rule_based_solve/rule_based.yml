@@ -1,0 +1,5 @@
+networks_filename: 'train_viz_test.json'
+n_losses: 2
+n_steps: 12
+rewards: [-100,-20,0,20,200]
+solution_columns: ['network_id','strategy','step','source_node','current_node','reward','total_reward']

@@ -7,7 +7,6 @@ import subprocess
 dev_param_dir = 'params/dev'
 notebook_dir = 'notebooks'
 
-
 def load_yaml(filename):
     with open(filename) as f:
         data = yaml.safe_load(f)
