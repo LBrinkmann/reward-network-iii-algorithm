@@ -6,7 +6,7 @@ import yaml
 import numpy as np
 import pandas as pd
 
-from environment import Reward_Network
+from environment_solve import Reward_Network
 
 
 def load_yaml(filename):
