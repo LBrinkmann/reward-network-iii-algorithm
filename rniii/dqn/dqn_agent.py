@@ -466,7 +466,8 @@ def train_agent(config=None):
         logger.log_episode()
         log({"avg_reward_all_envs": logger.episode_metrics['reward_episode_all_envs'][-1],
              "mean_q_all_envs": logger.episode_metrics['mean_q'][-1],
-             "max_q_all_envs": logger.episode_metrics['max_q'][-1]})
+             "max_q_all_envs": logger.episode_metrics['max_q'][-1],
+             "episode": e+1})
 
         print("\n")
         print("\n")
@@ -482,7 +483,7 @@ def train_agent(config=None):
 
             # Send the current training result back to Wandb (if wandb enabled),
             # else print metrics
-            log({"batch_loss": loss})
+            log({"batch_loss": loss, "learn_episode": e+1})
         else:
             print(f"Skip episode {e + 1}")
         print("\n")
