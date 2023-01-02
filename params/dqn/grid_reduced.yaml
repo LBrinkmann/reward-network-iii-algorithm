@@ -15,8 +15,7 @@ parameters:
   n_nodes:
     value: 10
   learning_rate:
-    value:
-      - 1.e-3
+    value: 1.e-3
   batch_size:
     values:
       - 8
