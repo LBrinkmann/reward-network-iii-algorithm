@@ -22,8 +22,7 @@ parameters:
       - 8
       - 16
   nn_hidden_layer_size:
-    value:
-      - 15
+    value: 15
   memory_size:
     values:
       - 50
