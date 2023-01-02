@@ -80,11 +80,6 @@ class Agent:
         device: torch device (cpu or cuda)
         """
 
-        # assert tests
-        assert os.path.exists(
-            save_dir
-        ), f"{save_dir} is not a valid path (does not exist)"
-
         # specify environment parameters
         self.obs_dim = obs_dim
         self.action_dim = action_dim
@@ -465,8 +460,8 @@ def train_agent(config=None):
         Mem.finish_episode()
         logger.log_episode()
         log({"avg_reward_all_envs": logger.episode_metrics['reward_episode_all_envs'][-1],
-             "mean_q_all_envs": logger.episode_metrics['mean_q'][-1],
-             "max_q_all_envs": logger.episode_metrics['max_q'][-1],
+             "mean_q_all_envs": logger.episode_metrics['q_mean'][-1],
+             "max_q_all_envs": logger.episode_metrics['q_max'][-1],
              "episode": e+1})
 
         print("\n")
@@ -508,7 +503,7 @@ if __name__ == "__main__":
     elif root_dir == "/Users":
         # Specify directories (local)
         project_folder = os.path.split(os.getcwd())[0]
-        data_dir = os.path.join(project_folder, "data")
+        data_dir = os.path.join(os.getcwd(), "data")
         out_dir = os.path.join(data_dir, "log")
 
     # train
