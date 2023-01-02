@@ -1,0 +1,39 @@
+program: rniii/dqn/dqn_agent.py
+method: grid
+metric:
+  goal: minimize
+  name: loss
+parameters:
+  data_name:
+    value: "train_viz_test.json"
+  n_episodes:
+    value: 10000
+  n_networks:
+    value: 954
+  n_rounds:
+    value: 8
+  n_nodes:
+    value: 10
+  learning_rate:
+    value:
+      - 1.e-3
+  batch_size:
+    values:
+      - 8
+      - 16
+  nn_hidden_layer_size:
+    value:
+      - 15
+  memory_size:
+    values:
+      - 50
+      - 200
+  exploration_rate_decay:
+    values:
+      - 0.7
+      - 0.9
+  nn_update_frequency:
+    values:
+      - 100
+      - 500
+
