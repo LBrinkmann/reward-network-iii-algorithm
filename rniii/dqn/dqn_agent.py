@@ -18,6 +18,7 @@ import time
 import matplotlib.pyplot as plt
 # import modules
 import numpy as np
+import torch
 # import Pytorch + hyperparameter tuning modules
 import torch as th
 import wandb
@@ -35,6 +36,7 @@ class Config(BaseModel):
     n_episodes: int = 50
     n_networks: int = 954
     n_rounds: int = 8
+    n_nodes: int = 10
     learning_rate: float = 1.e-4
     batch_size: int = 8
     nn_hidden_layer_size: int = 10
@@ -43,7 +45,8 @@ class Config(BaseModel):
     nn_update_frequency: int = 100
 
 
-WANDB_ENABLED = os.environ.get("WANDB_MODE", "enabled") == "enabled"
+# change string to compare os.environ with to enable ("enabled") or disable wandb
+WANDB_ENABLED = os.environ.get("WANDB_MODE", "enabled") == "dis-enabled"
 
 
 def train():
@@ -56,9 +59,12 @@ def train():
         train_agent(config)
 
 
-def log(data):
+def log(data, table=None):
     if WANDB_ENABLED:
         wandb.log(data)
+        if table:
+            table.add_data(v for k, v in data.items())
+        wandb.log({"metrics_table": table})
     else:
         print(" | ".join(f"{k}: {v}" for k, v in data.items()))
 
@@ -138,6 +144,10 @@ class Agent:
         # specify output directory
         self.save_dir = save_dir
 
+        # specify parameters for rule based
+        self.loss_counter = th.zeros(config.n_networks).int()
+        self.n_losses = th.full((config.n_networks,), 2).int()
+
     @staticmethod
     def apply_mask(q_values, mask):
         """
@@ -154,6 +164,66 @@ class Agent:
 
         q_values[~mask] = th.finfo(q_values.dtype).min
         return q_values
+
+    def reset_loss_counter(self):
+        """
+        this method resets the loss counter at the end of each episode for the "take_loss" strategy
+        """
+        self.loss_counter = th.zeros(self.n_networks).int()
+
+    def act_rule_based(self, obs, strategy: str):
+        """
+        Given a observation, choose an action (explore) according to a solving strategy with no
+        DQN involved
+
+        Args: obs (dict with values of th.tensor): observation from the env(s) comprising of one hot encoded
+        reward+step counter+ big loss counter and a valid action mask
+
+        Returns:
+            action (th.tensor): node index representing next nodes to move to for all envs
+            strategy (string): name of rule based strategy to use, one between ["myopic","take_loss","random"]
+        """
+
+        obs['mask'] = obs['mask'].to(self.device)
+        obs["obs"] = obs["obs"].to(self.device)
+
+        # get the reward indices for each of the 10 nodes within each environment
+        current_possible_reward_idx = th.zeros((self.n_networks, 10)).type(th.long)
+        splitted = th.split(th.nonzero(obs["obs"][:, :, :6]), 10)
+        for i in range(len(splitted)):
+            current_possible_reward_idx[i, :] = splitted[i][:, 2]
+
+        if strategy == "myopic":
+            action = th.unsqueeze(th.argmax(current_possible_reward_idx, dim=1), dim=-1)
+
+        elif strategy == "take_loss":
+            action = th.unsqueeze(th.argmax(current_possible_reward_idx, dim=1), dim=-1)
+
+            if not th.equal(self.loss_counter, self.n_losses):  # that is, if there are still envs where loss counter <2
+
+                loss_envs = (self.loss_counter != self.n_losses).nonzero()
+                # print(f"environments where loss counter is still <2", loss_envs.shape)
+                if loss_envs is not None:
+                    envs_where_loss_present = th.unique(
+                        (current_possible_reward_idx[loss_envs[:, 0], :] == 1).nonzero()[:, 0])
+                    # print("environment with loss counter <2 where there is a loss", envs_where_loss_present.shape)
+                    indices_selected_losses = th.multinomial(
+                        (current_possible_reward_idx[loss_envs[:, 0], :] == 1)[envs_where_loss_present, :].float(), 1)
+                    # print("indices of selected loss actions", indices_selected_losses.shape)
+                    loss_actions = current_possible_reward_idx[loss_envs[:, 0], :].gather(1, indices_selected_losses)
+                    # print("actual actions", loss_actions.shape)
+                    action[envs_where_loss_present, 0] = indices_selected_losses[:, 0]
+
+                    indices_loss_counter = loss_envs[:, 0][th.isin(loss_envs[:, 0], envs_where_loss_present)]
+                    indices_loss_counter2 = th.arange(self.n_networks)[
+                        th.isin(th.arange(self.n_networks), indices_loss_counter)]
+                    # print("indices of envs to make +1 on loss counter", indices_loss_counter2.shape)
+                    self.loss_counter[indices_loss_counter2] += 1
+
+        elif strategy == "random":
+            action= th.multinomial(obs["mask"].type(th.float), 1)
+
+        return action[:, 0]
 
     def act(self, obs):
         """
@@ -401,9 +471,37 @@ def train_agent(config=None):
     # ---------Start analysis------------------------------
     # initialize environment(s)
     env = Reward_Network(networks)
+    # new!
+    env_myopic = Reward_Network(networks)
+    env_loss = Reward_Network(networks)
+    env_random = Reward_Network(networks)
 
     # initialize Agent
     AI_agent = Agent(
+        obs_dim=2,
+        config=config,
+        action_dim=env.action_space_idx.shape,
+        save_dir=out_dir,
+        device=DEVICE,
+    )
+
+    AI_agent_myopic = Agent(
+        obs_dim=2,
+        config=config,
+        action_dim=env.action_space_idx.shape,
+        save_dir=out_dir,
+        device=DEVICE,
+    )
+
+    AI_agent_take_loss = Agent(
+        obs_dim=2,
+        config=config,
+        action_dim=env.action_space_idx.shape,
+        save_dir=out_dir,
+        device=DEVICE,
+    )
+
+    AI_agent_random = Agent(
         obs_dim=2,
         config=config,
         action_dim=env.action_space_idx.shape,
@@ -421,6 +519,18 @@ def train_agent(config=None):
         out_dir, config.n_networks, config.n_episodes, config.n_nodes
     )
 
+    # initialize wandb table
+    log_table = wandb.Table(columns=[
+        "episode",
+        "avg_reward_all_envs",
+        "avg_reward_rule_based_myopic_all_envs",
+        "avg_reward_rule_based_2losses_all_envs",
+        "avg_reward_rule_based_random_all_envs",
+        "mean_q_all_envs",
+        "max_q_all_envs",
+        "batch_loss"
+    ])
+
     for e in range(config.n_episodes):
         print(f"----EPISODE {e + 1}---- \n")
 
@@ -428,6 +538,17 @@ def train_agent(config=None):
         env.reset()
         # obtain first observation of the env(s)
         obs = env.observe()
+
+        # new! double env to keep track of rule based steps
+        env_myopic.reset()
+        # obtain first observation of the env(s)
+        obs_myopic = env_myopic.observe()
+        env_random.reset()
+        # obtain first observation of the env(s)
+        obs_random = env_random.observe()
+        env_loss.reset()
+        # obtain first observation of the env(s)
+        obs_loss = env_loss.observe()
 
         for round_num in range(config.n_rounds):
 
@@ -438,20 +559,42 @@ def train_agent(config=None):
 
             # choose action to perform in environment(s)
             action, step_q_values = AI_agent.act(obs)
+
+            action_myopic = AI_agent_myopic.act_rule_based(obs_myopic, "myopic")
+            action_take_loss = AI_agent_take_loss.act_rule_based(obs_loss, "take_loss")
+            action_random = AI_agent_random.act_rule_based(obs_random, "random")
+
             # print(f'q values for step {round} -> \n {step_q_values[:,:,0].detach()}')
             # agent performs action
             # if we are in the last step we only need reward, else output also the next state
             if round_num != 7:
                 next_obs, reward = env.step(action, round_num)
+
+                next_obs_myopic, reward_myopic = env_myopic.step(action_myopic, round_num)
+                next_obs_take_loss, reward_take_loss = env_loss.step(action_take_loss, round_num)
+                next_obs_random, reward_random = env_random.step(action_random, round_num)
+                reward2 = {"myopic": reward_myopic, "take_loss": reward_take_loss, "random": reward_random}
+
             else:
                 reward = env.step(action, round_num)
+
+                reward_myopic = env_myopic.step(action_myopic, round_num)
+                reward_take_loss = env_loss.step(action_take_loss, round_num)
+                reward_random = env_random.step(action_random, round_num)
+                reward2 = {"myopic": reward_myopic, "take_loss": reward_take_loss, "random": reward_random}
+                AI_agent_take_loss.reset_loss_counter()
+
             # remember transitions in memory
             Mem.store(round_num, reward=reward, action=action, **obs)
             if round_num != 7:
                 obs = next_obs
 
+                obs_myopic = next_obs_myopic
+                obs_loss = next_obs_take_loss
+                obs_random = next_obs_random
+
             # Logging (step)
-            logger.log_step(reward, step_q_values, round_num)
+            logger.log_step(reward, reward2, step_q_values, round_num)
 
             if env.is_done:
                 break
@@ -459,10 +602,11 @@ def train_agent(config=None):
         # --END OF EPISODE--
         Mem.finish_episode()
         logger.log_episode()
-        log({"avg_reward_all_envs": logger.episode_metrics['reward_episode_all_envs'][-1],
-             "mean_q_all_envs": logger.episode_metrics['q_mean'][-1],
-             "max_q_all_envs": logger.episode_metrics['q_max'][-1],
-             "episode": e+1})
+        # log({"episode": e + 1,
+        #     "avg_reward_all_envs": logger.episode_metrics['reward_episode_all_envs'][-1],
+        #     "mean_q_all_envs": logger.episode_metrics['q_mean'][-1],
+        #     "max_q_all_envs": logger.episode_metrics['q_max'][-1]
+        #     })
 
         print("\n")
         print("\n")
@@ -478,8 +622,36 @@ def train_agent(config=None):
 
             # Send the current training result back to Wandb (if wandb enabled),
             # else print metrics
-            log({"batch_loss": loss, "learn_episode": e+1})
+            # new! log everything , also in a table
+            log({"episode": e + 1,
+                 "avg_reward_all_envs": logger.episode_metrics['reward_episode_all_envs'][-1],
+                 "avg_reward_rule_based_myopic_all_envs":
+                     logger.episode_metrics['rule_based_reward_episode_all_envs']["myopic"][-1],
+                 "avg_reward_rule_based_2losses_all_envs":
+                     logger.episode_metrics['rule_based_reward_episode_all_envs']["take_loss"][-1],
+                 "avg_reward_rule_based_random_all_envs":
+                     logger.episode_metrics['rule_based_reward_episode_all_envs']["random"][-1],
+                 "mean_q_all_envs": logger.episode_metrics['q_mean'][-1],
+                 "max_q_all_envs": logger.episode_metrics['q_max'][-1],
+                 "batch_loss": loss
+                 })
+
+            # log({"batch_loss": loss, "learn_episode": e + 1})
         else:
+            # new! log everything , also in a table
+            log({"episode": e + 1,
+                 "avg_reward_all_envs": logger.episode_metrics['reward_episode_all_envs'][-1],
+                 "avg_reward_rule_based_myopic_all_envs":
+                     logger.episode_metrics['rule_based_reward_episode_all_envs']["myopic"][-1],
+                 "avg_reward_rule_based_2losses_all_envs":
+                     logger.episode_metrics['rule_based_reward_episode_all_envs']["take_loss"][-1],
+                 "avg_reward_rule_based_random_all_envs":
+                     logger.episode_metrics['rule_based_reward_episode_all_envs']["random"][-1],
+                 "mean_q_all_envs": logger.episode_metrics['q_mean'][-1],
+                 "max_q_all_envs": logger.episode_metrics['q_max'][-1],
+                 "batch_loss": float("nan")
+                 })
+
             print(f"Skip episode {e + 1}")
         print("\n")
 
@@ -503,7 +675,8 @@ if __name__ == "__main__":
     elif root_dir == "/Users":
         # Specify directories (local)
         project_folder = os.path.split(os.getcwd())[0]
-        data_dir = os.path.join(os.getcwd(), "data")
+        print(os.getcwd())
+        data_dir = os.path.join(os.getcwd(), "..", "..", "data")
         out_dir = os.path.join(data_dir, "log")
 
     # train

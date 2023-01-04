@@ -46,6 +46,9 @@ class MetricLogger:
             "q_min": [],
             "q_max": [],
             "q_learn": [],
+            "rule_based_reward_steps": {"myopic": [], "take_loss": [], "random": []}, # new!
+            "rule_based_reward_episode": {"myopic": [], "take_loss": [], "random": []}, # new!
+            "rule_based_reward_episode_all_envs": {"myopic": [], "take_loss": [], "random": []} # new!
         }
         self.ep_rewards = []
         self.ep_avg_losses = []
@@ -79,7 +82,12 @@ class MetricLogger:
         self.q_step_log = th.zeros(self.n_steps, self.n_networks, self.n_nodes)
         self.reward_step_log = th.zeros(self.n_steps, self.n_networks)
 
-    def log_step(self, reward, q_step, step_number):
+        self.curr_ep_reward_rule_based = {"myopic": 0.0, "take_loss": 0.0, "random": 0.0}
+        self.reward_rule_based_step_log = {"myopic": th.zeros(self.n_steps, self.n_networks),
+                                           "take_loss": th.zeros(self.n_steps, self.n_networks),
+                                           "random": th.zeros(self.n_steps, self.n_networks)}
+
+    def log_step(self, reward, reward2, q_step, step_number):
         """
         To be called at every transition within an episode, saves reward of the step
         and the aggregate functions of q values for each network-step
@@ -93,6 +101,13 @@ class MetricLogger:
         self.curr_ep_reward += reward
         self.reward_step_log[step_number, :] = reward[:, 0]
         self.q_step_log[step_number, :, :] = q_step[:, :, 0].detach()
+
+        self.curr_ep_reward_rule_based["myopic"] += reward2["myopic"]
+        self.curr_ep_reward_rule_based["take_loss"] += reward2["take_loss"]
+        self.curr_ep_reward_rule_based["random"] += reward2["random"]
+        self.reward_rule_based_step_log["myopic"][step_number, :] = reward2["myopic"][:, 0]
+        self.reward_rule_based_step_log["take_loss"][step_number, :] = reward2["take_loss"][:, 0]
+        self.reward_rule_based_step_log["random"][step_number, :] = reward2["random"][:, 0]
 
     def log_episode(self):
         """
@@ -125,6 +140,29 @@ class MetricLogger:
         )
         self.episode_metrics["q_max"].append(
             th.mean(self.episode_metrics["q_max_steps"][-1])
+        )
+
+        # NEW! log the total reward obtained in the episode for each of the networks (rule_based)
+        self.episode_metrics["rule_based_reward_steps"]["myopic"].append(self.reward_rule_based_step_log["myopic"])
+        self.episode_metrics["rule_based_reward_steps"]["take_loss"].append(self.reward_rule_based_step_log["take_loss"])
+        self.episode_metrics["rule_based_reward_steps"]["random"].append(self.reward_rule_based_step_log["random"])
+        self.episode_metrics["rule_based_reward_episode"]["myopic"].append(
+            th.squeeze(th.sum(self.reward_rule_based_step_log["myopic"], dim=0))
+        )
+        self.episode_metrics["rule_based_reward_episode"]["take_loss"].append(
+            th.squeeze(th.sum(self.reward_rule_based_step_log["take_loss"], dim=0))
+        )
+        self.episode_metrics["rule_based_reward_episode"]["random"].append(
+            th.squeeze(th.sum(self.reward_rule_based_step_log["random"], dim=0))
+        )
+        self.episode_metrics["rule_based_reward_episode_all_envs"]["myopic"].append(
+            th.mean(th.squeeze(th.sum(self.reward_rule_based_step_log["myopic"], dim=0))).item()
+        )
+        self.episode_metrics["rule_based_reward_episode_all_envs"]["take_loss"].append(
+            th.mean(th.squeeze(th.sum(self.reward_rule_based_step_log["take_loss"], dim=0))).item()
+        )
+        self.episode_metrics["rule_based_reward_episode_all_envs"]["random"].append(
+            th.mean(th.squeeze(th.sum(self.reward_rule_based_step_log["random"], dim=0))).item()
         )
 
         # reset values to zero

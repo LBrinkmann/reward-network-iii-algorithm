@@ -7,6 +7,8 @@
 ###############################################
 import torch
 import torch.nn.functional as F
+import os
+import json
 
 
 def restructure_edges(network):
@@ -299,14 +301,23 @@ class Reward_Network:
 
 # For quick testing purposes, comment out if not needed
 
-# with open(os.path.join(os.getcwd(),'data','train.json')) as json_file:
-#      test = json.load(json_file)
+# with open('../../data/train_viz_test.json') as json_file:
+#       test = json.load(json_file)
 # env_test = Reward_Network(test[10:13])
-
-
+#
+#
 # env_test.reset()
 # obs = env_test.observe()
-
+#
+# print(obs["obs"][:,:,:])
+# print(torch.nonzero(obs["obs"][:,:,:6]))
+# r = torch.zeros((3,10)).type(torch.int)
+# splitted = torch.split(torch.nonzero(obs["obs"][:,:,:6]), (10))
+# for i in range(len(splitted)):
+#     r[i,:]=splitted[i][:,2]
+# print(r)
+# print((r == 1).float())
+# print(torch.multinomial((r == 1)[1,:].float(),1))
 # next_obs,rewards= env_test.step(torch.tensor([3,6,2]))
 # print(rewards,rewards.shape)
 # print('\n')
