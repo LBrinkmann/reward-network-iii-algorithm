@@ -18,10 +18,10 @@ pip install -r requirements.txt
 ```
 
 ## Repo organization
-
-* **generate**: includes `.py` scripts to generate reward networks, as well as pydantic models to validate the generated networks structure
-* **solve**: includes `.py` scripts to solve networks according to rule-based strategies
-* **dqn**: includes `.py` files used for solving networks through deep reinforcement learning, as well as `.sh`files used to submit dqn runs on cluster
+* **rniii** is the project folder where all python scripts are found, in particular inside this folder we find
+  * **generate**: includes `.py` scripts to generate reward networks, as well as pydantic models to validate the generated networks structure
+  * **solve**: includes `.py` scripts to solve networks according to rule-based strategies
+  * **dqn**: includes `.py` files used for solving networks through deep reinforcement learning, as well as `.sh`files used to submit dqn runs on cluster
 * **params**: includes `.yml` files relevant to each subfolder (generate, solve, dqn)
 * **rn**: includes utilities used in the scripts in `notebooks` folder
 * **data**: includes json files where all generated reward networks used in the experiment are stored. The `_viz` suffix in the file names indicate those data files that have additional node location information (for frontend vizualization purposes)
@@ -101,3 +101,7 @@ H(dqn/dqn_agent.py) --> G(wandb_on_slurm.py)
 I(dqn/slurm_template.sh) --> G(wandb_on_slurm.py)
 end
 ```
+
+The script `dqn_agent.py` solves environments all at once using both DQN and rule based methods: the rule based methods results are also logged and serve as reference in the metrics plots.
+
+We log metrics for each episode: metrics for rule based and for dqn can be then compared in wandb following instructions at https://docs.wandb.ai/ref/app/features/panels/line-plot .
