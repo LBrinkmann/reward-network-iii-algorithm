@@ -46,7 +46,7 @@ class Config(BaseModel):
 
 
 # change string to compare os.environ with to enable ("enabled") or disable wandb
-WANDB_ENABLED = os.environ.get("WANDB_MODE", "enabled") == "dis-enabled"
+WANDB_ENABLED = os.environ.get("WANDB_MODE", "enabled") == "enabled"
 
 
 def train():
