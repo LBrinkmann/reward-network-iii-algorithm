@@ -199,7 +199,8 @@ class Agent:
         elif strategy == "take_loss":
             action = th.unsqueeze(th.argmax(current_possible_reward_idx, dim=1), dim=-1)
 
-            if not th.equal(self.loss_counter, self.n_losses):  # that is, if there are still envs where loss counter <2
+            # that is, if there are still envs where loss counter <2
+            if not th.equal(self.loss_counter, self.n_losses):
 
                 loss_envs = (self.loss_counter != self.n_losses).nonzero()
                 # print(f"environments where loss counter is still <2", loss_envs.shape)
@@ -221,7 +222,7 @@ class Agent:
                     self.loss_counter[indices_loss_counter2] += 1
 
         elif strategy == "random":
-            action= th.multinomial(obs["mask"].type(th.float), 1)
+            action = th.multinomial(obs["mask"].type(th.float), 1)
 
         return action[:, 0]
 
@@ -633,6 +634,7 @@ def train_agent(config=None):
                      logger.episode_metrics['rule_based_reward_episode_all_envs']["random"][-1],
                  "mean_q_all_envs": logger.episode_metrics['q_mean'][-1],
                  "max_q_all_envs": logger.episode_metrics['q_max'][-1],
+                 "min_q_all_envs": logger.episode_metrics['q_min'][-1],
                  "batch_loss": loss
                  })
 
@@ -649,6 +651,7 @@ def train_agent(config=None):
                      logger.episode_metrics['rule_based_reward_episode_all_envs']["random"][-1],
                  "mean_q_all_envs": logger.episode_metrics['q_mean'][-1],
                  "max_q_all_envs": logger.episode_metrics['q_max'][-1],
+                 "min_q_all_envs": logger.episode_metrics['q_min'][-1],
                  "batch_loss": float("nan")
                  })
 
