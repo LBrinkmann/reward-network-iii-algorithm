@@ -46,9 +46,9 @@ class MetricLogger:
             "q_min": [],
             "q_max": [],
             "q_learn": [],
-            "rule_based_reward_steps": {"myopic": [], "take_loss": [], "random": []}, # new!
-            "rule_based_reward_episode": {"myopic": [], "take_loss": [], "random": []}, # new!
-            "rule_based_reward_episode_all_envs": {"myopic": [], "take_loss": [], "random": []} # new!
+            "rule_based_reward_steps": {"myopic": [], "take_loss": [], "random": []},  # new!
+            "rule_based_reward_episode": {"myopic": [], "take_loss": [], "random": []},  # new!
+            "rule_based_reward_episode_all_envs": {"myopic": [], "take_loss": [], "random": []}  # new!
         }
         self.ep_rewards = []
         self.ep_avg_losses = []
@@ -127,10 +127,27 @@ class MetricLogger:
         # self.episode_metrics['loss'].append(loss)
 
         # log the mean, min and max q value in the episode over all envs but FOR EACH STEP SEPARATELY
-        # (apply mask to self.q_step_log ? we are mainly interested in the mean min and max of valid actions)
-        self.episode_metrics["q_mean_steps"].append(th.mean(self.q_step_log, dim=0))
-        self.episode_metrics["q_min_steps"].append(th.amin(self.q_step_log, dim=(1, 2)))
+        # since we are mainly interested in the mean min and max of VALID actions we first get a mask to index
+        # the valid actions in q_step_log
+
+        mask_valid = self.q_step_log != th.finfo(self.q_step_log.dtype).min
+        # now for each step calculate avg q value
+        q_mean_steps = th.zeros(self.n_steps)
+        q_min_steps = th.zeros(self.n_steps)
+        for s in range(self.n_steps):
+            q_mean_steps[s] = th.mean(self.q_step_log[s, :, :][mask_valid[s, :, :]])
+            q_min_steps[s] = th.amin(self.q_step_log[s, :, :][mask_valid[s, :, :]])
+
+        # print(th.nonzero(mask_valid[0,:,:].int()).shape)
+        # indices = th.masked_fill(th.cumsum(mask_valid.int(), dim=0), ~mask_valid, 0)
+        # prova = th.scatter(input=th.zeros_like(self.q_step_log), dim=1, index=indices, src=self.q_step_log)
+
+        # self.episode_metrics["q_mean_steps"].append(th.mean(self.q_step_log, dim=0))
+        # self.episode_metrics["q_min_steps"].append(th.amin(self.q_step_log, dim=(1, 2)))
+        self.episode_metrics["q_mean_steps"].append(q_mean_steps)
+        self.episode_metrics["q_min_steps"].append(q_min_steps)
         self.episode_metrics["q_max_steps"].append(th.amax(self.q_step_log, dim=(1, 2)))
+
         # log the average of mean, min and max q value in the episode ACROSS ALL STEPS
         self.episode_metrics["q_mean"].append(
             th.mean(self.episode_metrics["q_mean_steps"][-1])
@@ -144,7 +161,8 @@ class MetricLogger:
 
         # NEW! log the total reward obtained in the episode for each of the networks (rule_based)
         self.episode_metrics["rule_based_reward_steps"]["myopic"].append(self.reward_rule_based_step_log["myopic"])
-        self.episode_metrics["rule_based_reward_steps"]["take_loss"].append(self.reward_rule_based_step_log["take_loss"])
+        self.episode_metrics["rule_based_reward_steps"]["take_loss"].append(
+            self.reward_rule_based_step_log["take_loss"])
         self.episode_metrics["rule_based_reward_steps"]["random"].append(self.reward_rule_based_step_log["random"])
         self.episode_metrics["rule_based_reward_episode"]["myopic"].append(
             th.squeeze(th.sum(self.reward_rule_based_step_log["myopic"], dim=0))
